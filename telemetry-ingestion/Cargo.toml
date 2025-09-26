@@ -1,0 +1,24 @@
+[package]
+name = "telemetry-ingestion"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+telemetry-core = { path = "../telemetry-core" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+crossbeam = { workspace = true }
+rayon = { workspace = true }
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
+byteorder = { workspace = true }
+crc = { workspace = true }
+ringbuf = { workspace = true }
+tokio-serial = "5.4"
+tokio-util = "0.7"
+futures = "0.3"
+bytes = "1.5"
