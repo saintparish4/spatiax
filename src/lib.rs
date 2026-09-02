@@ -9,8 +9,8 @@
 //! What exists today: a DBC parser for `BO_`/`SG_`/`VAL_` records, bit-exact
 //! extraction and insertion for Intel and Motorola byte orders, signed and
 //! unsigned signals, factor/offset scaling, extended identifiers,
-//! multiplexed messages (simple multiplexing: one `M` per message), and
-//! value-table labels.
+//! multiplexed messages (simple multiplexing: one `M` per message),
+//! value-table labels, and replay of `candump` logs ([`candump`]).
 //!
 //! The evidence: hand-computed reference vectors, property tests over every
 //! layout from 1 to 64 bits, and a differential test that decodes generated
@@ -44,6 +44,7 @@
 #![deny(rust_2018_idioms)]
 #![warn(clippy::all)]
 
+pub mod candump;
 pub mod dbc;
 pub mod decode;
 pub mod encode;

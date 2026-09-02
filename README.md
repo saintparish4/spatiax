@@ -119,7 +119,8 @@ and CI runs that test.
 | Extended multiplexing (`m<N>M`, `SG_MUL_VAL_` ranges) | Rejected at parse time with a clear error, rather than decoded wrongly |
 | Value tables (`VAL_`, `Decoded::label`) | Done — `parses_value_tables_onto_their_signal`, `labels_match_the_sign_interpreted_raw_value`, labels compared in `tests/differential.rs` (≥10,000 enforced) |
 | CAN FD frame I/O | Planned |
-| SocketCAN live capture, `candump` replay | Planned |
+| `candump` log replay (`candump::LogReader`) | Done — `candump::tests`, `tests/candump.rs` replays `fixtures/gt3_sample.log` |
+| SocketCAN live capture | Planned |
 | Benchmarks | Planned |
 | MoTeC `.ld` export | Stretch goal |
 

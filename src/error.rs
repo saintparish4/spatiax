@@ -20,6 +20,15 @@ pub enum Error {
         message: String,
     },
 
+    /// A line of a `candump` log could not be read as a frame.
+    #[error("candump log parse error on line {line}: {message}")]
+    CandumpParse {
+        /// 1-based line number in the log.
+        line: usize,
+        /// What was wrong on that line.
+        message: String,
+    },
+
     /// A CAN identifier was outside the range its format permits.
     #[error("invalid CAN identifier {raw:#x}: {reason}")]
     InvalidId {
