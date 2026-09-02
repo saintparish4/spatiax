@@ -1,0 +1,26 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Working notes and scratch space — not part of the shipped repo
+/base/
+.claude/
+CLAUDE.md
+
+# Benchmark output
+/criterion/
+/flamegraph.svg
+perf.data*
+
+# Captured CAN logs and telemetry samples (can be large; keep fixtures explicit)
+*.blf
+*.mf4
+*.ld
+/logs/
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store

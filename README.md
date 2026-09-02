@@ -1,331 +1,183 @@
-# High-Speed Telemetry Processing System
-
-A high-performance telemetry processing system designed for Formula 1 style applications, capable of ingesting 1000+ channels of sensor data at kHz rates with real-time analysis and ML-based anomaly detection.
-
-## 🏎️ Features
-
-### Core Capabilities
-- **High-Speed Data Ingestion**: Process 1000+ channels at kHz sampling rates
-- **Lock-Free Architecture**: Optimized for minimal latency and maximum throughput
-- **CAN Bus Integration**: Native support for automotive CAN protocols with DBC parsing
-- **Multi-Protocol Support**: UDP, TCP, WebSocket, and Serial interfaces
-- **Real-Time Signal Processing**: Advanced filtering, statistics, and frequency analysis
-- **ML-Based Anomaly Detection**: Isolation Forest, One-Class SVM, and custom models
-- **Intelligent Alerting**: Rule-based and ML-driven alert generation
-- **Live Dashboard**: Real-time visualization and monitoring
-
-### Performance Characteristics
-- **Ingestion Rate**: Up to 100,000+ samples/second
-- **Latency**: Sub-millisecond processing latency
-- **Memory Efficiency**: Lock-free circular buffers with configurable sizes
-- **Scalability**: Multi-threaded processing with work-stealing queues
-- **Reliability**: Graceful degradation and error recovery
-
-## 🚀 Quick Start
-
-### Prerequisites
-- Rust 1.70+ (for core system)
-- Linux (recommended for CAN bus support)
-- 8GB+ RAM (for high-throughput processing)
-
-### Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/your-org/telemetry-system.git
-cd telemetry-system
-
-# Build the system
-cargo build --release
-
-# Run with default configuration
-cargo run --release
-```
-
-### Configuration
-
-The system uses a JSON configuration file (`config/telemetry.json`) that defines:
-
-```json
-{
-  "system": {
-    "name": "High-Speed Telemetry System",
-    "buffer_size": 100000,
-    "worker_threads": 8
-  },
-  "ingestion": {
-    "queue_size": 1000000,
-    "batch_size": 1000,
-    "can_interfaces": [
-      {
-        "name": "Primary CAN",
-        "interface": "can0",
-        "bitrate": 1000000,
-        "enabled": true
-      }
-    ]
-  },
-  "channels": [
-    {
-      "id": 1,
-      "name": "Engine_RPM",
-      "unit": "rpm",
-      "sample_rate": 100.0,
-      "data_type": "UInt16",
-      "alerts": [...]
-    }
-  ]
-}
-```
-
-## 🏗️ Architecture
-
-### System Components
-
-```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Data Sources  │───▶│  Ingestion      │───▶│   Analysis      │
-│                 │    │   Engine        │    │   Engine        │
-│ • CAN Bus       │    │                 │    │                 │
-│ • Network       │    │ • Lock-free     │    │ • Filtering     │
-│ • Serial        │    │   queues        │    │ • Statistics    │
-│ • Protocols     │    │ • Batch proc.   │    │ • FFT Analysis  │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                                                        │
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Dashboard     │◀───│   Alerting      │◀───│   ML Engine     │
-│                 │    │   System        │    │                 │
-│ • Real-time     │    │                 │    │ • Feature Ext.  │
-│   visualization │    │ • Rule engine   │    │ • Anomaly Det.  │
-│ • WebSocket     │    │ • Notifications │    │ • Auto-training │
-│ • REST API      │    │ • Escalation    │    │ • Model Mgmt.   │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-```
-
-### Data Flow
-
-1. **Ingestion**: Multi-source data collection with protocol parsing
-2. **Processing**: Real-time signal analysis and feature extraction
-3. **ML Analysis**: Anomaly detection with automatic model training
-4. **Alerting**: Rule-based and ML-driven alert generation
-5. **Visualization**: Live dashboard with historical data
-
-## 📊 Use Cases
-
-### Formula 1 / Racing
-- Engine telemetry monitoring
-- Vehicle dynamics analysis
-- Tire performance tracking
-- Fuel system optimization
-- Real-time strategy decisions
-
-### Industrial IoT
-- Manufacturing equipment monitoring
-- Predictive maintenance
-- Quality control systems
-- Energy management
-- Safety monitoring
-
-### Aerospace
-- Flight test data analysis
-- Engine health monitoring
-- Structural monitoring
-- Environmental systems
-- Mission-critical alerts
-
-## 🔧 Configuration Guide
-
-### Channel Configuration
-
-```json
-{
-  "id": 1,
-  "name": "Engine_RPM",
-  "unit": "rpm",
-  "data_type": "UInt16",
-  "sample_rate": 100.0,
-  "min_value": 0.0,
-  "max_value": 12000.0,
-  "calibration": {
-    "offset": 0.0,
-    "scale": 0.25,
-    "polynomial": null
-  },
-  "alerts": [
-    {
-      "name": "RPM Over-Rev",
-      "condition": {
-        "Threshold": { "max": 11000.0 }
-      },
-      "severity": "Critical",
-      "enabled": true
-    }
-  ]
-}
-```
-
-### CAN Bus Setup
-
-```json
-{
-  "can_interfaces": [
-    {
-      "name": "Primary CAN",
-      "interface": "can0",
-      "bitrate": 1000000,
-      "filters": [
-        { "id": "0x100", "mask": "0x700" }
-      ],
-      "enabled": true
-    }
-  ]
-}
-```
-
-### ML Configuration
-
-```json
-{
-  "ml": {
-    "enabled": true,
-    "model_path": "models/anomaly_detector.onnx",
-    "anomaly_threshold": 0.8,
-    "training_window_samples": 10000,
-    "retrain_interval_hours": 24,
-    "features": ["mean", "std", "min", "max"]
-  }
-}
-```
-
-## 🚀 Performance Tuning
-
-### High-Throughput Configuration
-
-```bash
-# Increase system limits
-echo 'fs.file-max = 1000000' >> /etc/sysctl.conf
-echo '* soft nofile 1000000' >> /etc/security/limits.conf
-echo '* hard nofile 1000000' >> /etc/security/limits.conf
-
-# Configure CAN interfaces
-sudo ip link set can0 type can bitrate 1000000
-sudo ip link set up can0
-
-# Run with optimized settings
-RUST_LOG=info ./target/release/telemetry-system
-```
-
-### Memory Optimization
-
-- Buffer sizes: Adjust based on available RAM
-- Batch processing: Optimize batch sizes for your workload
-- History retention: Configure based on storage capacity
-
-## 🔍 Monitoring & Observability
-
-### System Metrics
-- Ingestion rate (samples/second)
-- Processing latency (milliseconds)
-- Buffer utilization (percentage)
-- Memory usage and CPU utilization
-- Alert rates and acknowledgment times
-
-### Dashboard Features
-- Real-time channel visualization
-- Historical trend analysis
-- Alert management interface
-- System health monitoring
-- Performance analytics
-
-## 🛠️ Development
-
-### Building from Source
-
-```bash
-# Development build
-cargo build
-
-# Release build with optimizations
-cargo build --release
-
-# Run tests
-cargo test
-
-# Run with logging
-RUST_LOG=debug cargo run
-```
-
-### Adding Custom Protocols
-
-```rust
-use telemetry_ingestion::ProtocolDecoder;
-
-struct MyProtocolDecoder;
-
-impl ProtocolDecoder for MyProtocolDecoder {
-    fn decode(&self, data: &[u8]) -> Result<Vec<DataPoint>> {
-        // Implement your protocol parsing logic
-        todo!()
-    }
-    
-    fn get_name(&self) -> &str {
-        "MyProtocol"
-    }
-}
-```
-
-### Custom ML Models
-
-```rust
-use telemetry_ml::AnomalyDetector;
-
-struct MyAnomalyDetector;
-
-impl AnomalyDetector for MyAnomalyDetector {
-    fn detect(&mut self, features: &FeatureVector) -> Result<AnomalyResult> {
-        // Implement your anomaly detection logic
-        todo!()
-    }
-}
-```
-
-## 📈 Benchmarks
-
-### Performance Results (on AWS c5.4xlarge)
-
-| Metric | Value |
-|--------|-------|
-| Max Ingestion Rate | 150,000 samples/sec |
-| Avg Processing Latency | 0.3ms |
-| Memory Usage (1M samples) | 2.1GB |
-| CPU Usage (full load) | 85% |
-| Alert Processing Rate | 10,000 alerts/sec |
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests
-5. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- Inspired by Formula 1 telemetry systems
-- Built with Rust for maximum performance
-- Uses industry-standard protocols and algorithms
-- Designed for mission-critical applications
-
-## 📞 Support
-
-- Documentation: [docs/](docs/)
-- Issues: [GitHub Issues](https://github.com/your-org/telemetry-system/issues)
-- Discussions: [GitHub Discussions](https://github.com/your-org/telemetry-system/discussions)
+# canline
+
+A CAN bus / DBC decoder for motorsport telemetry, written in Rust.
+
+The point of this project is not that it decodes CAN — `cantools` already
+does that, and does it well. The point is that it decodes CAN **and ships
+the evidence that it does so correctly**: hand-computed reference vectors,
+exhaustive property tests, and a differential harness that checks every
+decode against the reference implementation the industry already trusts.
+
+> **Status: rebuild in progress.** This repository is being rewritten from
+> the ground up. Nothing below is claimed as working unless the status table
+> says so. See [Current state](#current-state) — it is deliberately blunt.
 
 ---
 
-**Built for Speed. Designed for Scale. Ready for Production.**
+## Why this exists
+
+Every car on a GT3, GT4, LMP, or single-seater grid runs CAN. Turning raw
+frames into engineering values — RPM, damper positions, brake temperatures,
+wheel speeds — is the first link in every telemetry chain, and it is a link
+teams maintain in-house. It is also a link where being *subtly* wrong is
+worse than being obviously broken: a decoder that silently misreads a
+big-endian signal produces plausible-looking traces that send an engineer
+chasing a problem that does not exist.
+
+So correctness is the product. The design follows from that.
+
+## Design
+
+These are the decisions the rebuild is built on, not a description of code
+that already exists — the [status table](#current-state) governs what has
+actually landed.
+
+**Bit extraction is isolated and tiny.** `src/decode.rs` contains no I/O, no
+allocation, and no knowledge of DBC text — just the arithmetic that pulls a
+signal out of a payload. Keeping it small is what makes it possible to test
+exhaustively.
+
+**Frames don't allocate.** CAN FD bounds a payload at 64 bytes, so a frame
+is a fixed `[u8; 64]` plus a length rather than a `Vec`. `CanFrame` is
+`Copy`, and the decode path performs no heap allocation.
+
+**The extended-identifier flag has exactly one interpretation site.** DBC
+marks a 29-bit identifier by setting bit 31 of the message ID. That is
+handled in `CanId::from_dbc` and nowhere else — a rule that exists because
+the previous iteration of this code got it wrong in one place and then
+rejected its own output in another.
+
+**One runtime dependency.** `thiserror`. Parsing a DBC is line-oriented text
+handling and decoding is integer shifts; both are the substance of the
+project rather than something to outsource.
+
+## Correctness strategy
+
+Three layers, in increasing order of what they catch:
+
+1. **Hand-computed reference vectors.** A small set of signals whose
+   expected raw and physical values were worked out on paper from the DBC
+   definition and the payload bytes. These are the only expectations in the
+   project not produced by a machine, which is exactly why they come first.
+   A decoder cannot pass these by being self-consistently wrong.
+2. **Property tests.** `encode(decode(x)) == x` across every start bit,
+   every width from 1 to 64, both byte orders, signed and unsigned —
+   especially signals straddling byte boundaries, which is where hand-written
+   vectors run out of imagination.
+3. **Differential testing against `cantools`.** Generate a random but valid
+   DBC and random frames, decode with both `canline` and the Python
+   reference, and assert agreement. This is the layer that turns "I believe
+   this is correct" into "here is the harness, run it yourself."
+
+Layer 3 is the differentiator. `cantools` is what motorsport data engineers
+already reach for, so agreement with it is a claim anyone can evaluate in
+about thirty seconds.
+
+## Current state
+
+Honest accounting. A row is only "done" when there is a test named for it
+and CI runs that test.
+
+| Capability | State |
+|---|---|
+| CAN frame and identifier types | Not yet landed |
+| DBC extended-identifier handling | Not yet landed |
+| DBC parser (`BO_` / `SG_` records) | Not yet landed |
+| Bit extraction, Intel byte order | Not yet landed |
+| Bit extraction, Motorola byte order | Not yet landed |
+| Signed signals, factor/offset scaling | Not yet landed |
+| Reference vector suite | Not yet landed |
+| Property tests | Planned |
+| Differential harness vs. `cantools` | Planned |
+| Multiplexed signals, CAN FD, value tables | Planned |
+| SocketCAN live capture, `candump` replay | Planned |
+| Benchmarks | Planned |
+| MoTeC `.ld` export | Stretch goal |
+
+There are **no published performance numbers**, and there will not be any
+until `cargo bench` produces them in CI on a machine the reader can
+identify. The previous version of this README carried a table of measured
+throughput and latency figures for a workspace that had never compiled;
+removing it was the first task of the rebuild.
+
+## Roadmap
+
+In order, each building on the one before:
+
+- **Salvage.** Collapse six crates to one, delete the subsystems that were
+  breadth rather than depth, restore a green build, and strip every unearned
+  claim.
+- **The decoder.** DBC parsing and bit-exact extraction for both byte
+  orders, against hand-computed vectors.
+- **Proof.** Property tests and the differential harness, both enforced in
+  CI.
+- **Real-world coverage.** Multiplexed signals, CAN FD, value tables,
+  SocketCAN capture, and `candump` replay.
+- **Performance.** Byte-aligned fast paths, benchmarks, and the first
+  numbers this project is willing to publish.
+
+## Stretch goal — MoTeC `.ld` export
+
+The intended endpoint is **writing decoded output as a MoTeC `.ld` file.**
+
+MoTeC i2 is the de facto analysis tool on GT3, GT4, LMP, and most
+single-seater grids; engineers work inside it for the whole of a session. A
+tool that emits `.ld` slots into a workflow that already exists instead of
+asking anyone to adopt a new viewer — "decode your CAN log, open it in i2"
+is a complete and useful sentence, in a way that "decode your log and then
+look at my custom dashboard" is not.
+
+It is also the part of this project that cannot be faked. The format is
+binary, undocumented by MoTeC, and community-reverse-engineered, so a
+working exporter is real evidence of both the reverse-engineering and the
+domain knowledge — that channels carry units and per-channel sample rates,
+and that those rates differ across a car. Verification is a round-trip:
+export a decoded log, open it in i2, and confirm the traces match the
+source, backed by a byte-level golden-file test.
+
+Deliberately *not* the stretch goal: a web dashboard, or a bespoke binary
+log format. Neither proves anything a motorsport team cares about.
+
+## Why the rewrite
+
+This started as a broad "high-speed telemetry platform" — six crates
+covering CAN, serial and network ingestion, signal processing, machine
+learning, and alerting. None of it compiled: the workspace listed two member
+crates that had never existed, so `cargo metadata` failed before dependency
+resolution, and the binary the README told you to run had no package to
+build it. There were no tests anywhere in roughly 8,200 lines.
+
+Reading it properly turned up three genuine decoder bugs, all of which a
+single test would have caught:
+
+- The DBC parser trimmed each line and then tested whether it started with
+  `" SG_ "` — a branch that can never be taken. Every message loaded with
+  **zero signals**, and the parser reported success.
+- Motorola (big-endian) bit extraction walked bit positions upward, which is
+  the Intel rule applied to Motorola data. Roughly half of production
+  motorsport DBCs use Motorola layout.
+- Extended identifiers were parsed without masking the DBC flag bit, so
+  every 29-bit ID came out around 2.1 billion too high — and was then
+  rejected by this project's own validator.
+
+The lesson taken from that is the one this rebuild is organised around:
+breadth is cheap and proves nothing. One decoder that is provably correct is
+worth more than six subsystems that merely look impressive in a file tree.
+
+## Building
+
+**The tree does not currently build.** The salvage step on the roadmap is
+what restores that, and until it lands this section describes the intended
+state rather than the present one.
+
+```bash
+cargo test
+```
+
+Once it is in: no system libraries, no ML runtimes, no Docker, and one
+dependency. Live CAN capture (Linux, `socketcan`) arrives later behind a
+feature flag, so the default build stays portable on macOS and Windows.
+
+## Licence
+
+MIT. See [LICENSE](LICENSE).
