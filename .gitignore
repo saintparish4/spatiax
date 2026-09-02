@@ -24,3 +24,6 @@ perf.data*
 .idea/
 *.swp
 .DS_Store
+
+# Local Python environment for the cantools differential oracle
+/.venv/

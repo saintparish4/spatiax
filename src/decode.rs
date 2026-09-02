@@ -67,6 +67,16 @@ pub fn decode_signal(data: &[u8], signal: &Signal) -> Result<f64> {
     Ok(signal.scale(extract_raw(data, signal)?))
 }
 
+/// The position after `pos` in a Motorola walk.
+///
+/// Shared with the encoder so the two directions cannot drift apart. The
+/// walk itself is checked against an independent formulation in the
+/// property tests and against `cantools` in the differential harness.
+pub(crate) fn motorola_step(pos: usize) -> usize {
+    // Leaving bit 0: cross to the next byte (+8) and climb to its MSB (+7).
+    if pos % 8 == 0 { pos + 15 } else { pos - 1 }
+}
+
 fn bit_at(data: &[u8], pos: usize) -> u64 {
     u64::from((data[pos / 8] >> (pos % 8)) & 1)
 }
@@ -84,8 +94,7 @@ fn extract_motorola(data: &[u8], start: usize, length: usize) -> u64 {
     let mut pos = start;
     for _ in 0..length {
         raw = (raw << 1) | bit_at(data, pos);
-        // Leaving bit 0: cross to the next byte (+8) and climb to its MSB (+7).
-        pos = if pos % 8 == 0 { pos + 15 } else { pos - 1 };
+        pos = motorola_step(pos);
     }
     raw
 }

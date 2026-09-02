@@ -49,6 +49,27 @@ pub enum Error {
         available: usize,
     },
 
+    /// A raw value had bits set above a signal's declared width.
+    #[error("raw value {raw:#x} does not fit in the {length} bit(s) of signal `{signal}`")]
+    RawOutOfRange {
+        /// Name of the signal being encoded.
+        signal: String,
+        /// The signal's width in bits.
+        length: u8,
+        /// The value that did not fit.
+        raw: u64,
+    },
+
+    /// A physical value fell outside what a signal's width and scaling can
+    /// represent, or was not a finite number.
+    #[error("value {value} cannot be encoded by signal `{signal}`")]
+    ValueOutOfRange {
+        /// Name of the signal being encoded.
+        signal: String,
+        /// The value that could not be represented.
+        value: f64,
+    },
+
     /// An underlying I/O failure, typically while reading a DBC file.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),

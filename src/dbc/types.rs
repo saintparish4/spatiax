@@ -88,6 +88,33 @@ impl Signal {
         };
         numeric * self.factor + self.offset
     }
+
+    /// Invert [`scale`](Self::scale): the raw bit pattern whose physical
+    /// value is nearest to `value`.
+    ///
+    /// Returns `None` when `value` is not finite or the nearest raw integer
+    /// does not fit the signal's width. Signed results come back as their
+    /// two's-complement pattern in `length` bits, ready for insertion.
+    pub fn unscale(&self, value: f64) -> Option<u64> {
+        let numeric = ((value - self.offset) / self.factor).round();
+        if !numeric.is_finite() {
+            return None;
+        }
+
+        let bits = u32::from(self.length);
+        match self.value_type {
+            ValueType::Unsigned => {
+                // 2^64 is exactly representable, so this bound also holds at length 64.
+                let limit = 2f64.powi(bits as i32);
+                (numeric >= 0.0 && numeric < limit).then_some(numeric as u64)
+            }
+            ValueType::Signed => {
+                let limit = 2f64.powi(bits as i32 - 1);
+                (numeric >= -limit && numeric < limit)
+                    .then(|| (numeric as i64 as u64) & (u64::MAX >> (64 - bits)))
+            }
+        }
+    }
 }
 
 /// A CAN message definition: an identifier and the signals it carries.
@@ -209,6 +236,54 @@ mod tests {
         let s = sig(1, ValueType::Signed, 1.0, 0.0);
         assert_eq!(s.scale(1), -1.0);
         assert_eq!(s.scale(0), 0.0);
+    }
+
+    #[test]
+    fn unscale_inverts_factor_and_offset_with_rounding() {
+        let s = sig(8, ValueType::Unsigned, 0.5, -40.0);
+        assert_eq!(s.unscale(10.0), Some(100));
+        // 10.2 -> raw 100.4, rounds to 100; 10.3 -> 100.6, rounds to 101.
+        assert_eq!(s.unscale(10.2), Some(100));
+        assert_eq!(s.unscale(10.3), Some(101));
+    }
+
+    #[test]
+    fn unscale_rejects_values_outside_the_unsigned_width() {
+        let s = sig(8, ValueType::Unsigned, 1.0, 0.0);
+        assert_eq!(s.unscale(255.0), Some(255));
+        assert_eq!(s.unscale(256.0), None);
+        assert_eq!(s.unscale(-1.0), None);
+    }
+
+    #[test]
+    fn unscale_produces_a_twos_complement_pattern_for_signed_signals() {
+        let s = sig(12, ValueType::Signed, 1.0, 0.0);
+        assert_eq!(s.unscale(-1.0), Some(0xFFF));
+        assert_eq!(s.unscale(-2048.0), Some(0x800));
+        assert_eq!(s.unscale(2047.0), Some(0x7FF));
+        assert_eq!(s.unscale(2048.0), None);
+        assert_eq!(s.unscale(-2049.0), None);
+    }
+
+    #[test]
+    fn unscale_is_correct_at_the_width_extremes() {
+        let one = sig(1, ValueType::Signed, 1.0, 0.0);
+        assert_eq!(one.unscale(-1.0), Some(1));
+        assert_eq!(one.unscale(1.0), None);
+
+        let wide = sig(64, ValueType::Unsigned, 1.0, 0.0);
+        assert_eq!(wide.unscale(0.0), Some(0));
+        assert_eq!(wide.unscale(2f64.powi(64)), None);
+
+        let wide_signed = sig(64, ValueType::Signed, 1.0, 0.0);
+        assert_eq!(wide_signed.unscale(-1.0), Some(u64::MAX));
+    }
+
+    #[test]
+    fn unscale_rejects_non_finite_input() {
+        let s = sig(16, ValueType::Unsigned, 1.0, 0.0);
+        assert_eq!(s.unscale(f64::NAN), None);
+        assert_eq!(s.unscale(f64::INFINITY), None);
     }
 
     #[test]

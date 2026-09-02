@@ -41,6 +41,7 @@
 
 pub mod dbc;
 pub mod decode;
+pub mod encode;
 pub mod error;
 pub mod frame;
 
