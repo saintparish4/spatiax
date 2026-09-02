@@ -8,9 +8,10 @@ the evidence that it does so correctly**: hand-computed reference vectors,
 exhaustive property tests, and a differential harness that checks every
 decode against the reference implementation the industry already trusts.
 
-> **Status: rebuild in progress.** This repository is being rewritten from
-> the ground up. Nothing below is claimed as working unless the status table
-> says so. See [Current state](#current-state) — it is deliberately blunt.
+> **Status: early.** The parser and decoder exist and pass hand-computed
+> reference vectors; the property tests and differential harness that would
+> *prove* them do not exist yet. Nothing below is claimed as working unless
+> the status table says so. See [Current state](#current-state).
 
 ---
 
@@ -28,9 +29,9 @@ So correctness is the product. The design follows from that.
 
 ## Design
 
-These are the decisions the rebuild is built on, not a description of code
-that already exists — the [status table](#current-state) governs what has
-actually landed.
+These are the decisions the rebuild is built on. Where a decision describes
+behaviour, the [status table](#current-state) governs whether that behaviour
+has actually landed and is tested.
 
 **Bit extraction is isolated and tiny.** `src/decode.rs` contains no I/O, no
 allocation, and no knowledge of DBC text — just the arithmetic that pulls a
@@ -82,14 +83,15 @@ and CI runs that test.
 |---|---|
 | CAN frame and identifier types | Done — `frame::tests`, `tests/public_api.rs` |
 | DBC extended-identifier handling | Done — `dbc_id_with_bit31_set_is_extended_and_strips_the_flag` |
-| DBC parser (`BO_` / `SG_` records) | Not yet landed |
-| Bit extraction, Intel byte order | Not yet landed |
-| Bit extraction, Motorola byte order | Not yet landed |
-| Signed signals, factor/offset scaling | Not yet landed |
-| Reference vector suite | Not yet landed |
+| DBC parser (`BO_` / `SG_` records) | Done — `dbc::parser::tests`, `fixture_parses_all_messages_and_signals` |
+| Bit extraction, Intel byte order | Done — `vector_a_intel_word_is_little_endian` |
+| Bit extraction, Motorola byte order | Done — `vector_b_motorola_word_is_big_endian`, `vector_c`, `vector_f` |
+| Signed signals, factor/offset scaling | Done — `vector_d_signed_signal_sign_extends_from_its_own_width`, `vector_e` |
+| Reference vector suite | Done — `tests/vectors.rs`, expected values computed by hand |
+| Multiplexed signals | Parsed, not yet filtered by multiplexor value |
 | Property tests | Planned |
 | Differential harness vs. `cantools` | Planned |
-| Multiplexed signals, CAN FD, value tables | Planned |
+| Multiplexor filtering, CAN FD DLC, value tables | Planned |
 | SocketCAN live capture, `candump` replay | Planned |
 | Benchmarks | Planned |
 | MoTeC `.ld` export | Stretch goal |

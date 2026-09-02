@@ -2,25 +2,36 @@
 //!
 //! The organising claim is not "this decodes CAN" but "this decodes CAN
 //! correctly, and here is the evidence". That shapes the layout: bit
-//! extraction is kept small and free of I/O so it can be property-tested and
-//! differentially tested against `cantools`, while parsing, capture, and
-//! export live outside it.
+//! extraction ([`decode`]) is small and free of I/O so it can be tested
+//! exhaustively, while parsing ([`dbc`]) and frame types ([`frame`]) live
+//! outside it.
 //!
-//! Today the crate provides the frame, identifier, and error types, the DBC
-//! signal definitions, and bit extraction for both byte orders. The DBC text
-//! parser is not here yet.
+//! What exists today: a DBC parser for `BO_`/`SG_` records, bit-exact
+//! extraction for Intel and Motorola byte orders, signed and unsigned
+//! signals, factor/offset scaling, and extended identifiers. Multiplexed
+//! signals are parsed but not yet filtered by multiplexor value.
 //!
 //! # Example
 //!
 //! ```
-//! use spatiax::{CanFrame, CanId};
+//! use spatiax::{CanFrame, CanId, dbc};
 //!
-//! // DBC writes extended identifiers with bit 31 set.
-//! let id = CanId::from_dbc(0x98FE_EE00)?;
-//! assert!(id.is_extended());
+//! let db = dbc::parse(
+//!     "BO_ 256 EngineData: 8 ECU\n \
+//!      SG_ EngineRPM : 0|16@1+ (0.25,0) [0|16383.75] \"rpm\" DASH\n \
+//!      SG_ CoolantTemp : 16|8@1+ (0.5,-40) [-40|87.5] \"degC\" DASH\n",
+//! )?;
 //!
-//! let frame = CanFrame::new(id, &[0x01, 0x02], 0)?;
-//! assert_eq!(frame.data(), &[0x01, 0x02]);
+//! let frame = CanFrame::new(CanId::Standard(256), &[0x34, 0x12, 0x64], 0)?;
+//! let decoded: Vec<_> = db
+//!     .decode_frame(&frame)
+//!     .expect("0x100 is in the database")
+//!     .collect::<Result<_, _>>()?;
+//!
+//! assert_eq!(decoded[0].signal.name, "EngineRPM");
+//! assert_eq!(decoded[0].value, 1165.0);
+//! assert_eq!(decoded[1].signal.name, "CoolantTemp");
+//! assert_eq!(decoded[1].value, 10.0);
 //! # Ok::<(), spatiax::Error>(())
 //! ```
 
@@ -33,6 +44,6 @@ pub mod decode;
 pub mod error;
 pub mod frame;
 
-pub use dbc::{Database, Signal};
+pub use dbc::{Database, Decoded, Message, Signal};
 pub use error::{Error, Result};
 pub use frame::{CanFrame, CanId, MAX_FRAME_LEN};

@@ -1,0 +1,30 @@
+VERSION "spatiax test fixture — not a real vehicle database"
+
+NS_ :
+
+BS_:
+
+BU_: ECU DASH LOGGER
+
+BO_ 256 EngineData: 8 ECU
+ SG_ EngineRPM : 0|16@1+ (0.25,0) [0|16383.75] "rpm" DASH,LOGGER
+ SG_ CoolantTemp : 16|8@1+ (0.5,-40) [-40|87.5] "degC" DASH
+ SG_ ThrottlePos : 24|8@1+ (0.4,0) [0|102] "%" DASH
+ SG_ OilPressure : 39|16@0+ (0.001,0) [0|65.535] "bar" DASH
+
+BO_ 512 WheelSpeeds: 8 ECU
+ SG_ WheelSpeedFL : 7|16@0+ (0.01,0) [0|655.35] "km/h" LOGGER
+ SG_ WheelSpeedFR : 23|16@0+ (0.01,0) [0|655.35] "km/h" LOGGER
+
+BO_ 768 SuspensionData: 8 ECU
+ SG_ DamperMux M : 0|8@1+ (1,0) [0|255] "" LOGGER
+ SG_ DamperPosFL m0 : 8|16@1- (0.1,0) [-3276.8|3276.7] "mm" LOGGER
+ SG_ DamperPosFR m1 : 8|16@1- (0.1,0) [-3276.8|3276.7] "mm" LOGGER
+
+BO_ 2566843904 DiagResponse: 8 ECU
+ SG_ ResponseCode : 0|8@1+ (1,0) [0|255] "" DASH
+
+CM_ SG_ 256 EngineRPM "Crankshaft speed";
+BA_DEF_ BO_ "GenMsgCycleTime" INT 0 10000;
+BA_ "GenMsgCycleTime" BO_ 256 10;
+BO_TX_BU_ 256 : ECU;
