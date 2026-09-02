@@ -11,9 +11,11 @@
 //! describes only the pages a team cares about — so such a frame yields just
 //! its plain signals and the multiplexor.
 
+pub mod check;
 pub mod parser;
 pub mod types;
 
+pub use check::{Problem, check};
 pub use parser::parse;
 pub use types::{ByteOrder, Database, Message, Multiplexing, Signal, ValueTable, ValueType};
 

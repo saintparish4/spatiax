@@ -10,12 +10,23 @@ keywords = ["can", "dbc", "canbus", "telemetry", "motorsport"]
 categories = ["parser-implementations", "embedded"]
 readme = "README.md"
 
+[features]
+default = ["cli"]
+# The `spatiax` binary. Library users can turn it off to keep clap out of
+# their dependency tree.
+cli = ["dep:clap"]
+
 [dependencies]
 thiserror = "2"
+clap = { version = "4", features = ["derive"], optional = true }
 
 [dev-dependencies]
 proptest = "1"
 rand = "0.9"
+
+[[bin]]
+name = "spatiax"
+required-features = ["cli"]
 
 [profile.release]
 lto = "thin"

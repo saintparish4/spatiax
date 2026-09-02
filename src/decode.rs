@@ -77,6 +77,18 @@ pub(crate) fn motorola_step(pos: usize) -> usize {
     if pos % 8 == 0 { pos + 15 } else { pos - 1 }
 }
 
+/// Every absolute bit position a signal occupies, in walk order.
+pub(crate) fn bit_positions(signal: &Signal) -> impl Iterator<Item = usize> {
+    let step: fn(usize) -> usize = match signal.byte_order {
+        ByteOrder::Intel => |pos| pos + 1,
+        ByteOrder::Motorola => motorola_step,
+    };
+    std::iter::successors(Some(usize::from(signal.start_bit)), move |&pos| {
+        Some(step(pos))
+    })
+    .take(usize::from(signal.length))
+}
+
 fn bit_at(data: &[u8], pos: usize) -> u64 {
     u64::from((data[pos / 8] >> (pos % 8)) & 1)
 }
@@ -189,6 +201,15 @@ mod tests {
         // From bit 7, 16 bits: Intel climbs into byte 2, Motorola stays in 0..=1.
         assert_eq!(required_bytes(&sig(7, 16, ByteOrder::Intel)), 3);
         assert_eq!(required_bytes(&sig(7, 16, ByteOrder::Motorola)), 2);
+    }
+
+    #[test]
+    fn bit_positions_follow_each_byte_order_across_a_boundary() {
+        let intel: Vec<_> = bit_positions(&sig(6, 4, ByteOrder::Intel)).collect();
+        assert_eq!(intel, [6, 7, 8, 9]);
+        // Motorola from bit 1 drops to bit 0, then jumps to bit 7 of byte 1.
+        let motorola: Vec<_> = bit_positions(&sig(1, 4, ByteOrder::Motorola)).collect();
+        assert_eq!(motorola, [1, 0, 15, 14]);
     }
 
     #[test]

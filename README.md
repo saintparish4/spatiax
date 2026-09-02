@@ -8,12 +8,13 @@ the evidence that it does so correctly**: hand-computed reference vectors,
 exhaustive property tests, and a differential harness that checks every
 decode against the reference implementation the industry already trusts.
 
-> **Status: early.** The parser, decoder, and encoder exist and are backed by
-> all three layers of evidence below — hand-computed vectors, property tests
-> over every layout, and a differential test against `cantools` that CI runs
-> on every push. Multiplexing, live capture, and performance numbers do not
-> exist yet. Nothing below is claimed as working unless the status table
-> says so. See [Current state](#current-state).
+> **Status: early.** The parser, decoder, encoder, `candump` replay, and the
+> `spatiax` command-line tool exist and are backed by the three layers of
+> evidence below — hand-computed vectors, property tests over every layout,
+> and a differential test against `cantools` that CI runs on every push.
+> Live capture and performance numbers do not exist yet. Nothing below is
+> claimed as working unless the status table says so. See
+> [Current state](#current-state).
 
 ---
 
@@ -50,9 +51,44 @@ handled in `CanId::from_dbc` and nowhere else — a rule that exists because
 the previous iteration of this code got it wrong in one place and then
 rejected its own output in another.
 
-**One runtime dependency.** `thiserror`. Parsing a DBC is line-oriented text
-handling and decoding is integer shifts; both are the substance of the
-project rather than something to outsource.
+**One runtime dependency for the library.** `thiserror`. Parsing a DBC is
+line-oriented text handling and decoding is integer shifts; both are the
+substance of the project rather than something to outsource. The `spatiax`
+binary adds `clap`, behind the default-on `cli` feature; a crate that only
+wants the decoder turns it off with `default-features = false`.
+
+## Using it
+
+```bash
+cargo install --path .
+
+spatiax decode car.dbc session.log                # text, grouped by frame
+spatiax decode car.dbc session.log --format csv   # one row per signal
+candump -L can0 | spatiax decode car.dbc -        # from a pipe
+spatiax check car.dbc                             # layout problems
+```
+
+`decode` reads the format `candump -l` writes. Frames the DBC does not
+describe are counted rather than printed; a malformed log line is reported
+on stderr with its line number and reading carries on. The text form looks
+like this:
+
+```text
+1700000000.000500 300 SuspensionData
+  DamperMux: Front right (1)
+  DamperPosFR: 1.6 mm
+1700000000.001000 18FEEE00 DiagResponse
+  ResponseCode: Overheat (1)
+```
+
+`check` reports the two layout problems `cantools` refuses to load in strict
+mode — a signal that runs past its message's DLC, and two signals that can
+decode together but share a bit — since the parser here is lenient and
+would otherwise decode such a file quietly.
+
+Exit status follows `grep`: 0 when nothing was wrong, 1 when the command
+finished but found something (malformed lines, layout problems), 2 when it
+could not run.
 
 ## Correctness strategy
 
@@ -120,6 +156,8 @@ and CI runs that test.
 | Value tables (`VAL_`, `Decoded::label`) | Done — `parses_value_tables_onto_their_signal`, `labels_match_the_sign_interpreted_raw_value`, labels compared in `tests/differential.rs` (≥10,000 enforced) |
 | CAN FD frame I/O | Planned |
 | `candump` log replay (`candump::LogReader`) | Done — `candump::tests`, `tests/candump.rs` replays `fixtures/gt3_sample.log` |
+| DBC layout check (`dbc::check`) | Done — `dbc::check::tests` |
+| `spatiax` binary (`decode`, `check`) | Done — `tests/cli.rs` runs the built binary end to end |
 | SocketCAN live capture | Planned |
 | Benchmarks | Planned |
 | MoTeC `.ld` export | Stretch goal |
@@ -200,13 +238,14 @@ worth more than six subsystems that merely look impressive in a file tree.
 cargo test
 ```
 
-No system libraries, no ML runtimes, no Docker, and one runtime dependency
-(`thiserror`); `proptest` and `rand` are dev-dependencies. Requires Rust
-1.85 or later. The differential test additionally wants Python 3 with
-`cantools` and skips with a message when it cannot find one — see
-[Correctness strategy](#correctness-strategy) for the two-line setup. Live CAN capture (Linux,
-`socketcan`) arrives later behind a feature flag, so the default build stays
-portable on macOS and Windows.
+No system libraries, no ML runtimes, no Docker. The library depends on
+`thiserror` alone; the binary adds `clap` behind the `cli` feature, and
+`proptest` and `rand` are dev-dependencies. Requires Rust 1.85 or later.
+The differential test additionally wants Python 3 with `cantools` and skips
+with a message when it cannot find one — see
+[Correctness strategy](#correctness-strategy) for the two-line setup. Live
+CAN capture (Linux, `socketcan`) arrives later behind a feature flag, so the
+default build stays portable on macOS and Windows.
 
 ## Licence
 
