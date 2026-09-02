@@ -2,14 +2,18 @@
 //!
 //! The organising claim is not "this decodes CAN" but "this decodes CAN
 //! correctly, and here is the evidence". That shapes the layout: bit
-//! extraction ([`decode`]) is small and free of I/O so it can be tested
-//! exhaustively, while parsing ([`dbc`]) and frame types ([`frame`]) live
-//! outside it.
+//! extraction ([`decode`]) and insertion ([`encode`]) are small and free of
+//! I/O so they can be tested exhaustively, while parsing ([`dbc`]) and frame
+//! types ([`frame`]) live outside them.
 //!
 //! What exists today: a DBC parser for `BO_`/`SG_` records, bit-exact
-//! extraction for Intel and Motorola byte orders, signed and unsigned
-//! signals, factor/offset scaling, and extended identifiers. Multiplexed
-//! signals are parsed but not yet filtered by multiplexor value.
+//! extraction and insertion for Intel and Motorola byte orders, signed and
+//! unsigned signals, factor/offset scaling, and extended identifiers.
+//! Multiplexed signals are parsed but not yet filtered by multiplexor value.
+//!
+//! The evidence: hand-computed reference vectors, property tests over every
+//! layout from 1 to 64 bits, and a differential test that decodes generated
+//! databases with both this crate and `cantools` and requires agreement.
 //!
 //! # Example
 //!

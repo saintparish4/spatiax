@@ -8,10 +8,12 @@ the evidence that it does so correctly**: hand-computed reference vectors,
 exhaustive property tests, and a differential harness that checks every
 decode against the reference implementation the industry already trusts.
 
-> **Status: early.** The parser and decoder exist and pass hand-computed
-> reference vectors; the property tests and differential harness that would
-> *prove* them do not exist yet. Nothing below is claimed as working unless
-> the status table says so. See [Current state](#current-state).
+> **Status: early.** The parser, decoder, and encoder exist and are backed by
+> all three layers of evidence below — hand-computed vectors, property tests
+> over every layout, and a differential test against `cantools` that CI runs
+> on every push. Multiplexing, live capture, and performance numbers do not
+> exist yet. Nothing below is claimed as working unless the status table
+> says so. See [Current state](#current-state).
 
 ---
 
@@ -61,18 +63,37 @@ Three layers, in increasing order of what they catch:
    definition and the payload bytes. These are the only expectations in the
    project not produced by a machine, which is exactly why they come first.
    A decoder cannot pass these by being self-consistently wrong.
-2. **Property tests.** `encode(decode(x)) == x` across every start bit,
-   every width from 1 to 64, both byte orders, signed and unsigned —
-   especially signals straddling byte boundaries, which is where hand-written
-   vectors run out of imagination.
-3. **Differential testing against `cantools`.** Generate a random but valid
-   DBC and random frames, decode with both `spatiax` and the Python
-   reference, and assert agreement. This is the layer that turns "I believe
-   this is correct" into "here is the harness, run it yourself."
+2. **Property tests.** `tests/properties.rs` runs `proptest` over random
+   start bits, every width from 1 to 64, both byte orders, and both value
+   types inside a 64-byte payload: insert-then-extract round-trips,
+   insertion never touches a bit outside the signal, `required_bytes` is
+   exactly the span touched, and extraction agrees with an oracle written
+   from a different formulation of the bit-numbering rule. Signals
+   straddling byte boundaries — where hand-written vectors run out of
+   imagination — are the common case here, not the edge case.
+3. **Differential testing against `cantools`.** `tests/differential.rs`
+   generates random but valid DBCs (standard and extended identifiers,
+   payloads from 1 to 64 bytes, non-overlapping Intel and Motorola signals,
+   signed and unsigned, assorted scalings) and random frames, decodes them
+   with both `spatiax` and the Python reference, and requires exact
+   agreement on raw values and float-noise agreement on physical values.
+   Re-encoding the raw values must also reproduce the bytes `cantools`
+   produces. The test refuses to pass with fewer than 100,000 decoded
+   signal values; CI runs 500,000 and fails if the oracle is missing.
 
 Layer 3 is the differentiator. `cantools` is what motorsport data engineers
 already reach for, so agreement with it is a claim anyone can evaluate in
-about thirty seconds.
+about thirty seconds:
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install cantools==43.0.2
+cargo test --test differential -- --nocapture
+```
+
+The test finds `.venv/bin/python` on its own, or honours
+`SPATIAX_ORACLE_PYTHON`. Every run prints its seed; `SPATIAX_DIFFERENTIAL_SEED`
+replays one, and a failure leaves the generated files under
+`target/differential/<seed>/`.
 
 ## Current state
 
@@ -88,10 +109,12 @@ and CI runs that test.
 | Bit extraction, Motorola byte order | Done — `vector_b_motorola_word_is_big_endian`, `vector_c`, `vector_f` |
 | Signed signals, factor/offset scaling | Done — `vector_d_signed_signal_sign_extends_from_its_own_width`, `vector_e` |
 | Reference vector suite | Done — `tests/vectors.rs`, expected values computed by hand |
+| Signal encoder (`insert_raw`, `encode_signal`) | Done — `encode::tests`, `insert_then_extract_returns_the_raw_value`, re-encoding checked against `cantools` |
+| 64-byte (CAN FD) payloads | Done — every layout up to 64 bytes in `tests/properties.rs` and `tests/differential.rs` |
+| Property tests | Done — `tests/properties.rs`, 10 properties, 2,048 cases each locally and 16,384 in CI |
+| Differential test vs. `cantools` | Done — `tests/differential.rs`, ≥100,000 generated cases enforced, 500,000 in CI |
 | Multiplexed signals | Parsed, not yet filtered by multiplexor value |
-| Property tests | Planned |
-| Differential harness vs. `cantools` | Planned |
-| Multiplexor filtering, CAN FD DLC, value tables | Planned |
+| Multiplexor filtering, value tables, CAN FD frame I/O | Planned |
 | SocketCAN live capture, `candump` replay | Planned |
 | Benchmarks | Planned |
 | MoTeC `.ld` export | Stretch goal |
@@ -172,8 +195,11 @@ worth more than six subsystems that merely look impressive in a file tree.
 cargo test
 ```
 
-No system libraries, no ML runtimes, no Docker, and one dependency
-(`thiserror`). Requires Rust 1.85 or later. Live CAN capture (Linux,
+No system libraries, no ML runtimes, no Docker, and one runtime dependency
+(`thiserror`); `proptest` and `rand` are dev-dependencies. Requires Rust
+1.85 or later. The differential test additionally wants Python 3 with
+`cantools` and skips with a message when it cannot find one — see
+[Correctness strategy](#correctness-strategy) for the two-line setup. Live CAN capture (Linux,
 `socketcan`) arrives later behind a feature flag, so the default build stays
 portable on macOS and Windows.
 

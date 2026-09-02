@@ -31,9 +31,34 @@ jobs:
 
       - name: Test
         run: cargo test --all-features
+        env:
+          PROPTEST_CASES: 16384
 
       - name: Docs
         run: cargo doc --no-deps
+
+  differential:
+    name: differential vs cantools
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the reference decoder
+        run: pip install cantools==43.0.2
+
+      - name: Decode generated databases with both implementations
+        run: cargo test --test differential -- --nocapture
+        env:
+          SPATIAX_REQUIRE_ORACLE: "1"
+          SPATIAX_DIFFERENTIAL_CASES: "500000"
 
   msrv:
     name: minimum supported rust version

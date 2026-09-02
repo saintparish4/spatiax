@@ -113,8 +113,17 @@ fn scaling() -> impl Strategy<Value = (f64, f64)> {
     (factor, offset)
 }
 
+/// Cases per property. `PROPTEST_CASES` raises it in CI; setting the count
+/// explicitly here would otherwise override that variable.
+fn cases() -> u32 {
+    std::env::var("PROPTEST_CASES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2048)
+}
+
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(2048))]
+    #![proptest_config(ProptestConfig::with_cases(cases()))]
 
     #[test]
     fn extract_agrees_with_an_independent_formulation_of_the_bit_rule(
