@@ -60,9 +60,12 @@ impl fmt::Display for Problem {
     }
 }
 
-/// Every layout problem in the database, in message order.
+/// Every layout problem in the database, by message identifier (standard
+/// before extended) and then DBC order within the message.
 pub fn check(db: &Database) -> Vec<Problem> {
-    db.messages().flat_map(check_message).collect()
+    let mut messages: Vec<&Message> = db.messages().collect();
+    messages.sort_by_key(|m| (m.id.is_extended(), m.id.raw()));
+    messages.into_iter().flat_map(check_message).collect()
 }
 
 fn check_message(message: &Message) -> Vec<Problem> {
@@ -199,6 +202,24 @@ mod tests {
                 "P: signals `Page1` and `Plain` overlap",
             ]
         );
+    }
+
+    #[test]
+    fn problems_come_out_in_identifier_order_whatever_the_file_order() {
+        let dbc = "BO_ 2147483649 Ext: 1 E\n \
+                   SG_ X : 0|16@1+ (1,0) [0|0] \"\" X\n\
+                   BO_ 512 Second: 1 E\n \
+                   SG_ S : 0|16@1+ (1,0) [0|0] \"\" X\n\
+                   BO_ 1 First: 1 E\n \
+                   SG_ F : 0|16@1+ (1,0) [0|0] \"\" X\n";
+        let order: Vec<String> = check(&parse(dbc).unwrap())
+            .into_iter()
+            .map(|p| match p {
+                Problem::SignalPastDlc { message, .. } => message,
+                Problem::Overlap { message, .. } => message,
+            })
+            .collect();
+        assert_eq!(order, ["First", "Second", "Ext"]);
     }
 
     #[test]
