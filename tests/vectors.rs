@@ -154,6 +154,28 @@ fn vector_g_multiplexor_selects_the_page_that_decodes() {
 }
 
 #[test]
+fn vector_h_value_table_labels_the_raw_value() {
+    // ResponseCode: 0|8@1+ with VAL_ 0 "OK" 1 "Overheat" 255 "Not available".
+    // 0x01 -> "Overheat"; 0x42 has no entry; 0xFF -> the label with spaces.
+    let db = fixture();
+    let code = db
+        .message(CanId::Extended(0x18FE_EE00))
+        .unwrap()
+        .signal("ResponseCode")
+        .unwrap();
+    assert_eq!(code.label(0x01), Some("Overheat"));
+    assert_eq!(code.label(0x42), None);
+    assert_eq!(code.label(0xFF), Some("Not available"));
+
+    let mux = db
+        .message(CanId::Standard(768))
+        .unwrap()
+        .signal("DamperMux")
+        .unwrap();
+    assert_eq!(mux.label(1), Some("Front right"));
+}
+
+#[test]
 fn a_classic_can_frame_shorter_than_the_dlc_reports_which_signals_did_not_fit() {
     // Four bytes of an eight-byte message: EngineRPM, CoolantTemp, and
     // ThrottlePos fit; OilPressure (bytes 4..5) does not.

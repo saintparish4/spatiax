@@ -28,3 +28,5 @@ CM_ SG_ 256 EngineRPM "Crankshaft speed";
 BA_DEF_ BO_ "GenMsgCycleTime" INT 0 10000;
 BA_ "GenMsgCycleTime" BO_ 256 10;
 BO_TX_BU_ 256 : ECU;
+VAL_ 768 DamperMux 0 "Front left" 1 "Front right" ;
+VAL_ 2566843904 ResponseCode 0 "OK" 1 "Overheat" 255 "Not available" ;

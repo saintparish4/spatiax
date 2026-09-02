@@ -8,7 +8,7 @@
 //! The parser enforces this; the decoder does not re-check it.
 
 use crate::frame::CanId;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Bit ordering of a signal within its frame — the DBC `@` field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,6 +47,52 @@ pub enum Multiplexing {
     Multiplexed(u16),
 }
 
+/// Labels for particular raw values of a signal — the DBC `VAL_` record.
+///
+/// Keys are matched against the raw value after sign interpretation, so a
+/// signed 8-bit signal reading `0xFF` matches a key of `-1`, never `255`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ValueTable {
+    /// Sorted by key, keys unique.
+    entries: Vec<(i64, String)>,
+}
+
+impl ValueTable {
+    /// Build from `(key, label)` pairs. A later pair for the same key
+    /// replaces an earlier one, which is how `cantools` reads a record too.
+    pub fn new(entries: impl IntoIterator<Item = (i64, String)>) -> Self {
+        let deduplicated: BTreeMap<i64, String> = entries.into_iter().collect();
+        Self {
+            entries: deduplicated.into_iter().collect(),
+        }
+    }
+
+    /// The label for a sign-interpreted raw value, if one is defined.
+    pub fn label(&self, numeric: i64) -> Option<&str> {
+        self.entries
+            .binary_search_by_key(&numeric, |(key, _)| *key)
+            .ok()
+            .map(|index| self.entries[index].1.as_str())
+    }
+
+    /// `(key, label)` pairs in ascending key order.
+    pub fn iter(&self) -> impl Iterator<Item = (i64, &str)> {
+        self.entries
+            .iter()
+            .map(|(key, label)| (*key, label.as_str()))
+    }
+
+    /// Number of labelled values.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Whether no values are labelled.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
 /// One signal within a CAN message.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Signal {
@@ -72,9 +118,23 @@ pub struct Signal {
     pub unit: String,
     /// Multiplexing role.
     pub multiplexing: Multiplexing,
+    /// Labels for particular raw values. Empty for most signals.
+    pub value_table: ValueTable,
 }
 
 impl Signal {
+    /// The label the value table gives a raw value, if any.
+    pub fn label(&self, raw: u64) -> Option<&str> {
+        let numeric = match self.value_type {
+            ValueType::Unsigned => i64::try_from(raw).ok()?,
+            ValueType::Signed => {
+                let shift = 64 - u32::from(self.length);
+                ((raw << shift) as i64) >> shift
+            }
+        };
+        self.value_table.label(numeric)
+    }
+
     /// Apply sign interpretation and the linear transform to a raw value.
     ///
     /// For signed signals I shift the value up so its MSB lands in bit 63 and
@@ -140,6 +200,11 @@ impl Message {
         self.signals.iter().find(|s| s.name == name)
     }
 
+    /// Mutable access to the signal named `name`.
+    pub fn signal_mut(&mut self, name: &str) -> Option<&mut Signal> {
+        self.signals.iter_mut().find(|s| s.name == name)
+    }
+
     /// The signal whose raw value selects which multiplexed signals apply.
     pub fn multiplexor(&self) -> Option<&Signal> {
         self.signals
@@ -168,6 +233,11 @@ impl Database {
     /// Look up the definition for an identifier.
     pub fn message(&self, id: CanId) -> Option<&Message> {
         self.messages.get(&id)
+    }
+
+    /// Mutable access to the definition for an identifier.
+    pub fn message_mut(&mut self, id: CanId) -> Option<&mut Message> {
+        self.messages.get_mut(&id)
     }
 
     /// Number of messages defined.
@@ -208,6 +278,7 @@ mod tests {
             max: 0.0,
             unit: String::new(),
             multiplexing: Multiplexing::None,
+            value_table: ValueTable::default(),
         }
     }
 
@@ -300,6 +371,67 @@ mod tests {
         let s = sig(16, ValueType::Unsigned, 1.0, 0.0);
         assert_eq!(s.unscale(f64::NAN), None);
         assert_eq!(s.unscale(f64::INFINITY), None);
+    }
+
+    fn table(entries: &[(i64, &str)]) -> ValueTable {
+        ValueTable::new(entries.iter().map(|(k, l)| (*k, l.to_string())))
+    }
+
+    #[test]
+    fn value_table_sorts_entries_and_keeps_the_last_label_for_a_repeated_key() {
+        let t = table(&[(5, "five"), (-1, "minus"), (5, "FIVE")]);
+        assert_eq!(t.len(), 2);
+        assert_eq!(t.iter().collect::<Vec<_>>(), [(-1, "minus"), (5, "FIVE")]);
+        assert_eq!(t.label(5), Some("FIVE"));
+        assert_eq!(t.label(4), None);
+        assert!(ValueTable::default().is_empty());
+    }
+
+    #[test]
+    fn labels_match_the_sign_interpreted_raw_value() {
+        let mut signed = sig(8, ValueType::Signed, 1.0, 0.0);
+        signed.value_table = table(&[(-1, "minus one"), (255, "never")]);
+        assert_eq!(signed.label(0xFF), Some("minus one"));
+        assert_eq!(signed.label(0x7F), None);
+
+        let mut unsigned = sig(8, ValueType::Unsigned, 1.0, 0.0);
+        unsigned.value_table = table(&[(-1, "never"), (255, "max")]);
+        assert_eq!(unsigned.label(0xFF), Some("max"));
+    }
+
+    #[test]
+    fn labels_are_keyed_by_raw_rather_than_physical_value() {
+        let mut s = sig(8, ValueType::Unsigned, 0.5, -40.0);
+        s.value_table = table(&[(100, "raw hundred"), (10, "physical ten")]);
+        assert_eq!(s.label(100), Some("raw hundred"));
+    }
+
+    #[test]
+    fn a_raw_value_beyond_i64_never_matches_a_label() {
+        let mut s = sig(64, ValueType::Unsigned, 1.0, 0.0);
+        s.value_table = table(&[(-1, "minus one")]);
+        assert_eq!(s.label(u64::MAX), None);
+    }
+
+    #[test]
+    fn mutable_lookups_reach_the_stored_signal() {
+        let mut db = Database::new();
+        db.insert(msg(1, vec![sig(8, ValueType::Unsigned, 1.0, 0.0)]));
+        db.message_mut(CanId::Standard(1))
+            .and_then(|m| m.signal_mut("T"))
+            .unwrap()
+            .value_table = table(&[(0, "off")]);
+        assert_eq!(
+            db.message(CanId::Standard(1)).unwrap().signals[0].label(0),
+            Some("off")
+        );
+        assert!(db.message_mut(CanId::Standard(2)).is_none());
+        assert!(
+            db.message_mut(CanId::Standard(1))
+                .unwrap()
+                .signal_mut("U")
+                .is_none()
+        );
     }
 
     #[test]

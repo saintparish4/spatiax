@@ -6,10 +6,11 @@
 //! I/O so they can be tested exhaustively, while parsing ([`dbc`]) and frame
 //! types ([`frame`]) live outside them.
 //!
-//! What exists today: a DBC parser for `BO_`/`SG_` records, bit-exact
+//! What exists today: a DBC parser for `BO_`/`SG_`/`VAL_` records, bit-exact
 //! extraction and insertion for Intel and Motorola byte orders, signed and
-//! unsigned signals, factor/offset scaling, extended identifiers, and
-//! multiplexed messages (simple multiplexing: one `M` per message).
+//! unsigned signals, factor/offset scaling, extended identifiers,
+//! multiplexed messages (simple multiplexing: one `M` per message), and
+//! value-table labels.
 //!
 //! The evidence: hand-computed reference vectors, property tests over every
 //! layout from 1 to 64 bits, and a differential test that decodes generated

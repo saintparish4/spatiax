@@ -15,7 +15,7 @@ pub mod parser;
 pub mod types;
 
 pub use parser::parse;
-pub use types::{ByteOrder, Database, Message, Multiplexing, Signal, ValueType};
+pub use types::{ByteOrder, Database, Message, Multiplexing, Signal, ValueTable, ValueType};
 
 use crate::decode::extract_raw;
 use crate::error::Result;
@@ -34,6 +34,13 @@ pub struct Decoded<'a> {
     pub raw: u64,
     /// The physical value after sign interpretation and scaling.
     pub value: f64,
+}
+
+impl<'a> Decoded<'a> {
+    /// The label the signal's value table gives this raw value, if any.
+    pub fn label(&self) -> Option<&'a str> {
+        self.signal.label(self.raw)
+    }
 }
 
 impl Message {
@@ -214,6 +221,21 @@ mod tests {
         let decoded = decode_all(&db, &frame);
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].as_ref().unwrap().raw, 0x2A);
+    }
+
+    #[test]
+    fn a_decoded_signal_carries_its_label_when_the_table_names_the_raw_value() {
+        let text = "BO_ 1 A: 8 E\n SG_ Gear : 0|8@1- (1,0) [0|0] \"\" X\n\
+                    VAL_ 1 Gear -1 \"Reverse\" 0 \"Neutral\";\n";
+        let db = parse(text).unwrap();
+        let label = |byte: u8| {
+            let frame = CanFrame::new(CanId::Standard(1), &[byte], 0).unwrap();
+            let decoded = decode_all(&db, &frame);
+            decoded[0].as_ref().unwrap().label().map(str::to_string)
+        };
+        assert_eq!(label(0xFF).as_deref(), Some("Reverse"));
+        assert_eq!(label(0x00).as_deref(), Some("Neutral"));
+        assert_eq!(label(0x01), None);
     }
 
     #[test]

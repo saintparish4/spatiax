@@ -5,17 +5,25 @@ For every `<name>.dbc` in the given directory, reads `<name>.frames` (one
 `<message name> <hex payload>` per line) and writes `<name>.expected`:
 
     S <frame index> <signal name> <raw> <physical value>
+    L <frame index> <signal name> <label>   (the value table names this raw)
     E <frame index> <hex payload re-encoded from the raw values>
     U <frame index> <multiplexor value>   (no m<N> signal claims this value)
 
 Everything printed is cantools' own output, untouched. Raw values for signed
 signals are therefore negative integers, and physical values are Python ints
 when the DBC scaling is integral. The Rust side is responsible for comparing
-across that representation gap.
+across that representation gap. A label runs to the end of its line and may
+contain spaces or be empty.
 
 For a multiplexed message the S lines cover only the signals cantools
 considered present. cantools refuses to decode a frame whose multiplexor
 value selects no page; such frames get a U line carrying the value it saw.
+
+Labels come from `Signal.choices`, the tables cantools parsed, looked up by
+the raw value it unpacked -- which is exactly what its `decode_data` does
+with `scaling=False`. Decoding with `decode_choices=True` instead would go
+raw -> label -> number to select a multiplexor page, and lands on the wrong
+page when two keys of the multiplexor share a label.
 """
 
 import pathlib
@@ -53,6 +61,9 @@ def process(dbc_path: pathlib.Path) -> int:
         for signal_name in raw:
             lines.append(f"S {index} {signal_name} {raw[signal_name]} {scaled[signal_name]!r}")
             cases += 1
+            choices = message.get_signal_by_name(signal_name).choices
+            if choices and raw[signal_name] in choices:
+                lines.append(f"L {index} {signal_name} {choices[raw[signal_name]]}")
 
         encoded = message.encode(raw, scaling=False, padding=False, strict=True)
         lines.append(f"E {index} {encoded.hex()}")

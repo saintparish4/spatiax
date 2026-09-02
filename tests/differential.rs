@@ -28,18 +28,26 @@ use std::process::Command;
 use rand::rngs::StdRng;
 use rand::seq::{IndexedRandom, SliceRandom};
 use rand::{Rng, SeedableRng};
-use spatiax::dbc::{self, ByteOrder, Database, Message, Multiplexing, Signal, ValueType};
+use spatiax::dbc::{
+    self, ByteOrder, Database, Message, Multiplexing, Signal, ValueTable, ValueType,
+};
 use spatiax::encode::insert_raw;
 use spatiax::{CanFrame, CanId};
 
 /// The published exit criterion: at least this many decoded signal values.
 const MINIMUM_CASES: usize = 100_000;
+/// Of which at least this many carry a label on the `cantools` side.
+const MINIMUM_LABELS: usize = 10_000;
 const DEFAULT_CASE_TARGET: usize = 150_000;
 const FRAMES_PER_MESSAGE: usize = 48;
 const MAX_MISMATCHES_REPORTED: usize = 20;
 const MULTIPLEXED_MESSAGE_RATE: f64 = 0.35;
 /// How often a frame of a multiplexed message is steered onto a defined page.
 const CLAIMED_SELECTOR_RATE: f64 = 0.85;
+const VALUE_TABLE_RATE: f64 = 0.3;
+/// How often a frame has one of its labelled signals set to a labelled key.
+const LABELLED_FRAME_RATE: f64 = 0.5;
+const LABEL_WORDS: &[&str] = &["Off", "On", "Error", "Not available", "Init", "SNA", ""];
 
 /// Classic CAN lengths weighted towards 8, plus every CAN FD length.
 const DLCS: &[usize] = &[
@@ -77,20 +85,21 @@ fn spatiax_agrees_with_cantools_on_generated_databases() {
     eprintln!("oracle: {}", summary.trim());
 
     let mut mismatches = Vec::new();
-    let mut cases = 0;
+    let (mut cases, mut labels) = (0, 0);
     for (index, generated) in databases.iter().enumerate() {
         let db = dbc::parse(&generated.text).expect("generated DBC parses");
         let expected = read_expected(&dir.join(format!("{index:03}.expected")));
         let comparison = Comparison::new(&db, &expected, index).run(generated);
         mismatches.extend(comparison.mismatches);
         cases += comparison.cases;
+        labels += comparison.labels;
     }
 
-    report(&mismatches, seed, &dir, cases);
+    report(&mismatches, seed, &dir, cases, labels);
     std::fs::remove_dir_all(&dir).expect("clean up generated files");
 }
 
-fn report(mismatches: &[String], seed: u64, dir: &Path, cases: usize) {
+fn report(mismatches: &[String], seed: u64, dir: &Path, cases: usize, labels: usize) {
     if !mismatches.is_empty() {
         let shown: Vec<_> = mismatches.iter().take(MAX_MISMATCHES_REPORTED).collect();
         panic!(
@@ -104,10 +113,14 @@ fn report(mismatches: &[String], seed: u64, dir: &Path, cases: usize) {
                 .join("\n"),
         );
     }
-    eprintln!("{cases} decoded signal values agreed with cantools");
+    eprintln!("{cases} decoded signal values agreed with cantools, {labels} of them labelled");
     assert!(
         cases >= MINIMUM_CASES,
         "only {cases} cases were generated; the criterion is {MINIMUM_CASES}"
+    );
+    assert!(
+        labels >= MINIMUM_LABELS,
+        "only {labels} labelled values were generated; the criterion is {MINIMUM_LABELS}"
     );
 }
 
@@ -154,11 +167,13 @@ fn run_oracle(python: &Path, dir: &Path) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
-/// `S <frame> <signal> <raw> <value>`, `E <frame> <hex>`, and
-/// `U <frame> <selector>` lines, grouped by frame index.
+/// `S <frame> <signal> <raw> <value>`, `L <frame> <signal> <label>`,
+/// `E <frame> <hex>`, and `U <frame> <selector>` lines, grouped by frame
+/// index. A label is the rest of its line, spaces and all.
 #[derive(Default)]
 struct Expected {
     signals: HashMap<usize, HashMap<String, (i128, f64)>>,
+    labels: HashMap<usize, HashMap<String, String>>,
     encoded: HashMap<usize, Vec<u8>>,
     unclaimed: HashMap<usize, i128>,
 }
@@ -167,7 +182,7 @@ fn read_expected(path: &Path) -> Expected {
     let text = std::fs::read_to_string(path).expect("oracle wrote an expectation file");
     let mut expected = Expected::default();
     for line in text.lines() {
-        let fields: Vec<&str> = line.split_whitespace().collect();
+        let fields: Vec<&str> = line.splitn(5, ' ').collect();
         let frame: usize = fields[1].parse().unwrap();
         match fields[0] {
             "S" => {
@@ -178,6 +193,14 @@ fn read_expected(path: &Path) -> Expected {
                     .entry(frame)
                     .or_default()
                     .insert(fields[2].to_string(), (raw, value));
+            }
+            "L" => {
+                let label = fields[3..].join(" ");
+                expected
+                    .labels
+                    .entry(frame)
+                    .or_default()
+                    .insert(fields[2].to_string(), label);
             }
             "E" => {
                 expected.encoded.insert(frame, unhex(fields[2]));
@@ -199,6 +222,8 @@ struct Comparison<'a> {
     db_index: usize,
     mismatches: Vec<String>,
     cases: usize,
+    /// Signal values `cantools` gave a label, all of which I matched.
+    labels: usize,
 }
 
 impl<'a> Comparison<'a> {
@@ -209,6 +234,7 @@ impl<'a> Comparison<'a> {
             db_index,
             mismatches: Vec::new(),
             cases: 0,
+            labels: 0,
         }
     }
 
@@ -241,6 +267,7 @@ impl<'a> Comparison<'a> {
         }
 
         let want = &self.expected.signals[&frame_index];
+        let want_labels = self.expected.labels.get(&frame_index);
         for d in &decoded {
             match want.get(&d.signal.name) {
                 Some(&(raw, value)) => self.signal(d, raw, value, context),
@@ -249,6 +276,8 @@ impl<'a> Comparison<'a> {
                     d.signal.name
                 )),
             }
+            let want_label = want_labels.and_then(|labels| labels.get(&d.signal.name));
+            self.label(d, want_label.map(String::as_str), context);
         }
         if decoded.len() != want.len() {
             self.mismatch(format!(
@@ -282,6 +311,24 @@ impl<'a> Comparison<'a> {
                 "{context} {}: value {} != cantools {want_value} ({})",
                 d.signal.name,
                 d.value,
+                describe(d.signal)
+            ));
+        }
+    }
+
+    /// Both sides must agree on whether the raw value has a label and on
+    /// which one; the count is kept separately so it can be seen to be
+    /// non-trivial.
+    fn label(&mut self, d: &dbc::Decoded<'_>, want: Option<&str>, context: &str) {
+        if want.is_some() {
+            self.labels += 1;
+        }
+        if d.label() != want {
+            self.mismatch(format!(
+                "{context} {}: label {:?} != cantools {want:?} (raw {}, {})",
+                d.signal.name,
+                d.label(),
+                d.raw,
                 describe(d.signal)
             ));
         }
@@ -396,8 +443,10 @@ fn render_frames(generated: &Generated) -> String {
     out
 }
 
+/// Value tables go after every message, where DBC tools write them.
 fn generate_database(rng: &mut StdRng) -> Generated {
     let mut text = String::new();
+    let mut tables = String::new();
     let mut frames = Vec::new();
     let mut cases = 0;
     let mut ids = HashSet::new();
@@ -414,12 +463,14 @@ fn generate_database(rng: &mut StdRng) -> Generated {
             .collect();
 
         text.push_str(&render_message(&message));
+        tables.push_str(&render_value_tables(&message));
         cases += payloads
             .iter()
             .map(|p| message.decode(p).count())
             .sum::<usize>();
         frames.push((message.name, id, payloads));
     }
+    text.push_str(&tables);
 
     Generated {
         text,
@@ -464,6 +515,11 @@ fn generate_message(rng: &mut StdRng, id: CanId, index: usize) -> Message {
         signals.push(multiplexor);
     }
     signals.shuffle(rng);
+    for signal in &mut signals {
+        if rng.random_bool(VALUE_TABLE_RATE) {
+            signal.value_table = random_value_table(rng, signal);
+        }
+    }
 
     Message {
         id,
@@ -471,6 +527,44 @@ fn generate_message(rng: &mut StdRng, id: CanId, index: usize) -> Message {
         dlc: dlc as u8,
         sender: "Node".into(),
         signals,
+    }
+}
+
+/// One to four labelled keys within the signal's range. A signed signal
+/// sometimes also gets the unsigned reading of a negative key, which must
+/// never match: keys are looked up by the sign-interpreted value.
+fn random_value_table(rng: &mut StdRng, signal: &Signal) -> ValueTable {
+    let bits = u32::from(signal.length);
+    let mut entries = Vec::new();
+    for n in 0..rng.random_range(1..=4) {
+        let key = match signal.value_type {
+            ValueType::Unsigned => {
+                let max = (u64::MAX >> (64 - bits)).min(i64::MAX as u64);
+                rng.random_range(0..=max) as i64
+            }
+            ValueType::Signed => {
+                let half = 1i128 << (bits - 1);
+                rng.random_range(-half..half) as i64
+            }
+        };
+        entries.push((key, random_label(rng, n)));
+
+        let alias = i128::from(key) + (1i128 << bits);
+        if key < 0 && rng.random_bool(0.25) {
+            if let Ok(alias) = i64::try_from(alias) {
+                entries.push((alias, "Alias".into()));
+            }
+        }
+    }
+    ValueTable::new(entries)
+}
+
+fn random_label(rng: &mut StdRng, n: usize) -> String {
+    let word = *LABEL_WORDS.choose(rng).unwrap();
+    if word.is_empty() {
+        String::new()
+    } else {
+        format!("{word}_{n}")
     }
 }
 
@@ -580,6 +674,7 @@ impl Layout {
             max: 0.0,
             unit: String::new(),
             multiplexing,
+            value_table: ValueTable::default(),
         })
     }
 }
@@ -631,27 +726,52 @@ fn positions(start: usize, length: usize, byte_order: ByteOrder) -> Vec<usize> {
 }
 
 /// A random payload, usually steered onto one of the message's pages so the
-/// multiplexed signals actually get exercised.
+/// multiplexed signals actually get exercised, and often onto a labelled
+/// key, since random bits seldom hit one on a wide signal.
 fn random_frame(rng: &mut StdRng, message: &Message) -> Vec<u8> {
     let mut payload = random_payload(rng, usize::from(message.dlc));
-    let Some(multiplexor) = message.multiplexor() else {
-        return payload;
-    };
-    if rng.random_bool(CLAIMED_SELECTOR_RATE) {
-        let claimed: Vec<u16> = message
-            .signals
-            .iter()
-            .filter_map(|s| match s.multiplexing {
-                Multiplexing::Multiplexed(n) => Some(n),
-                _ => None,
-            })
-            .collect();
-        let selector = *claimed
-            .choose(rng)
-            .expect("every multiplexed message has a page");
-        insert_raw(&mut payload, multiplexor, u64::from(selector)).unwrap();
+    if let Some(multiplexor) = message.multiplexor() {
+        if rng.random_bool(CLAIMED_SELECTOR_RATE) {
+            steer_onto_page(rng, message, multiplexor, &mut payload);
+        }
+    }
+    if rng.random_bool(LABELLED_FRAME_RATE) {
+        steer_onto_label(rng, message, &mut payload);
     }
     payload
+}
+
+fn steer_onto_page(rng: &mut StdRng, message: &Message, multiplexor: &Signal, payload: &mut [u8]) {
+    let claimed: Vec<u16> = message
+        .signals
+        .iter()
+        .filter_map(|s| match s.multiplexing {
+            Multiplexing::Multiplexed(n) => Some(n),
+            _ => None,
+        })
+        .collect();
+    let selector = *claimed
+        .choose(rng)
+        .expect("every multiplexed message has a page");
+    insert_raw(payload, multiplexor, u64::from(selector)).unwrap();
+}
+
+/// Only signals present on the frame's page are candidates, so the label
+/// really is observable.
+fn steer_onto_label(rng: &mut StdRng, message: &Message, payload: &mut [u8]) {
+    let labelled: Vec<Signal> = message
+        .decode(payload)
+        .filter_map(Result::ok)
+        .filter(|d| !d.signal.value_table.is_empty())
+        .map(|d| d.signal.clone())
+        .collect();
+    let Some(signal) = labelled.choose(rng) else {
+        return;
+    };
+    let keys: Vec<i64> = signal.value_table.iter().map(|(key, _)| key).collect();
+    let key = *keys.choose(rng).unwrap();
+    let raw = (key as u64) & (u64::MAX >> (64 - u32::from(signal.length)));
+    insert_raw(payload, signal, raw).unwrap();
 }
 
 fn random_payload(rng: &mut StdRng, len: usize) -> Vec<u8> {
@@ -665,14 +785,20 @@ fn random_payload(rng: &mut StdRng, len: usize) -> Vec<u8> {
     payload
 }
 
-fn render_message(message: &Message) -> String {
-    let dbc_id = match message.id {
+fn dbc_id(id: CanId) -> u32 {
+    match id {
         CanId::Standard(id) => u32::from(id),
         CanId::Extended(id) => id | 0x8000_0000,
-    };
+    }
+}
+
+fn render_message(message: &Message) -> String {
     let mut out = format!(
-        "BO_ {dbc_id} {}: {} {}\n",
-        message.name, message.dlc, message.sender
+        "BO_ {} {}: {} {}\n",
+        dbc_id(message.id),
+        message.name,
+        message.dlc,
+        message.sender
     );
     for s in &message.signals {
         let order = match s.byte_order {
@@ -696,6 +822,18 @@ fn render_message(message: &Message) -> String {
         .unwrap();
     }
     out.push('\n');
+    out
+}
+
+fn render_value_tables(message: &Message) -> String {
+    let mut out = String::new();
+    for s in message.signals.iter().filter(|s| !s.value_table.is_empty()) {
+        write!(out, "VAL_ {} {}", dbc_id(message.id), s.name).unwrap();
+        for (key, label) in s.value_table.iter() {
+            write!(out, " {key} \"{label}\"").unwrap();
+        }
+        out.push_str(" ;\n");
+    }
     out
 }
 

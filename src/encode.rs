@@ -87,7 +87,7 @@ fn insert_motorola(data: &mut [u8], start: usize, length: usize, raw: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dbc::types::{Multiplexing, ValueType};
+    use crate::dbc::types::{Multiplexing, ValueTable, ValueType};
     use crate::decode::extract_raw;
 
     fn sig(start_bit: u16, length: u8, byte_order: ByteOrder) -> Signal {
@@ -103,6 +103,7 @@ mod tests {
             max: 0.0,
             unit: String::new(),
             multiplexing: Multiplexing::None,
+            value_table: ValueTable::default(),
         }
     }
 

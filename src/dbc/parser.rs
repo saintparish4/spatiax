@@ -4,49 +4,116 @@
 //! the thing a caller most needs on failure is the line number, which I would
 //! lose behind a parser-combinator stack.
 //!
-//! Records understood: `BO_` (message), `SG_` (signal), and `SG_MUL_VAL_`
-//! (checked against the `SG_` tokens, not stored). Everything else — `CM_`,
-//! `BA_`, `BA_DEF_`, `VAL_`, `BO_TX_BU_`, `BU_`, `NS_`, `BS_` — is skipped,
-//! because a database that refuses to load over a comment record is useless
-//! in a garage.
+//! Records understood: `BO_` (message), `SG_` (signal), `VAL_` (value
+//! table), and `SG_MUL_VAL_` (checked against the `SG_` tokens, not stored).
+//! The last two must follow the `BO_` block they refer to, which is where
+//! every DBC writer puts them. Everything else — `CM_`, `BA_`, `BA_DEF_`,
+//! `VAL_TABLE_`, `BO_TX_BU_`, `BU_`, `NS_`, `BS_` — is skipped, because a
+//! database that refuses to load over a comment record is useless in a
+//! garage.
 
 use std::str::FromStr;
 
-use crate::dbc::types::{ByteOrder, Database, Message, Multiplexing, Signal, ValueType};
+use crate::dbc::types::{
+    ByteOrder, Database, Message, Multiplexing, Signal, ValueTable, ValueType,
+};
 use crate::error::{Error, Result};
 use crate::frame::CanId;
 
 /// Parse DBC source text into a [`Database`].
 pub fn parse(text: &str) -> Result<Database> {
-    let mut db = Database::new();
-    let mut current: Option<Message> = None;
-
+    let mut parser = Parser::default();
     for (index, raw_line) in text.lines().enumerate() {
-        let line_no = index + 1;
-        let line = raw_line.trim();
+        parser.line(index + 1, raw_line.trim())?;
+    }
+    parser.finish()
+}
+
+#[derive(Default)]
+struct Parser {
+    db: Database,
+    current: Option<Message>,
+    /// A `VAL_` record still waiting for its `;`: the line it began on and
+    /// the text gathered so far. Long tables are sometimes wrapped.
+    pending: Option<(usize, String)>,
+}
+
+impl Parser {
+    fn line(&mut self, line_no: usize, line: &str) -> Result<()> {
+        if let Some((start, mut text)) = self.pending.take() {
+            text.push(' ');
+            text.push_str(line);
+            return self.value_record(start, text);
+        }
 
         // The trailing space keeps `BO_` from matching `BO_TX_BU_`.
         if let Some(rest) = line.strip_prefix("BO_ ") {
-            flush(&mut current, &mut db);
-            current = Some(parse_message(rest, line_no)?);
+            self.flush();
+            self.current = Some(parse_message(rest, line_no)?);
         } else if let Some(rest) = line.strip_prefix("SG_ ") {
-            let message = current
+            let message = self
+                .current
                 .as_mut()
                 .ok_or_else(|| parse_error(line_no, "SG_ record appears before any BO_ message"))?;
             push_signal(message, parse_signal(rest, line_no)?, line_no)?;
         } else if let Some(rest) = line.strip_prefix("SG_MUL_VAL_ ") {
-            flush(&mut current, &mut db);
-            check_multiplexer_values(&db, rest, line_no)?;
+            self.flush();
+            check_multiplexer_values(&self.db, rest, line_no)?;
+        } else if let Some(rest) = line.strip_prefix("VAL_ ") {
+            self.flush();
+            self.value_record(line_no, rest.to_string())?;
+        }
+        Ok(())
+    }
+
+    fn finish(mut self) -> Result<Database> {
+        if let Some((start, text)) = self.pending.take() {
+            self.value_table(start, &text)?;
+        }
+        self.flush();
+        Ok(self.db)
+    }
+
+    fn flush(&mut self) {
+        if let Some(finished) = self.current.take() {
+            self.db.insert(finished);
         }
     }
 
-    flush(&mut current, &mut db);
-    Ok(db)
-}
+    fn value_record(&mut self, start: usize, text: String) -> Result<()> {
+        match text.trim_end().strip_suffix(';') {
+            Some(body) => self.value_table(start, body),
+            None => {
+                self.pending = Some((start, text));
+                Ok(())
+            }
+        }
+    }
 
-fn flush(current: &mut Option<Message>, db: &mut Database) {
-    if let Some(finished) = current.take() {
-        db.insert(finished);
+    /// `<id> <signal> <key> "<label>" ... ;`
+    ///
+    /// A record naming a message or signal this file does not define is
+    /// dropped without complaint, and so is the `VAL_ <EnvVar> ...` form for
+    /// environment variables; `cantools` does the same. A later record for
+    /// the same signal replaces the earlier table rather than merging.
+    fn value_table(&mut self, line: usize, body: &str) -> Result<()> {
+        let (id_token, after_id) =
+            split_token(body).ok_or_else(|| parse_error(line, "VAL_ record has no identifier"))?;
+        let Ok(raw_id) = id_token.parse::<u32>() else {
+            return Ok(());
+        };
+        let (signal_name, entries_text) = split_token(after_id)
+            .ok_or_else(|| parse_error(line, "VAL_ record has no signal name"))?;
+        let entries = parse_value_entries(entries_text, line)?;
+
+        let target = CanId::from_dbc(raw_id)
+            .ok()
+            .and_then(|id| self.db.message_mut(id))
+            .and_then(|message| message.signal_mut(signal_name));
+        if let Some(signal) = target {
+            signal.value_table = ValueTable::new(entries);
+        }
+        Ok(())
     }
 }
 
@@ -118,6 +185,7 @@ fn parse_signal(rest: &str, line: usize) -> Result<Signal> {
         max,
         unit,
         multiplexing,
+        value_table: ValueTable::default(),
     })
 }
 
@@ -198,6 +266,44 @@ fn check_multiplexer_values(db: &Database, rest: &str, line: usize) -> Result<()
         line,
         format!("signal `{signal_name}` uses extended multiplexing, which is not supported"),
     ))
+}
+
+/// `<key> "<label>"` pairs until the text runs out. The key may butt up
+/// against the opening quote, as `cantools` allows.
+fn parse_value_entries(mut text: &str, line: usize) -> Result<Vec<(i64, String)>> {
+    let mut entries = Vec::new();
+    loop {
+        text = text.trim_start();
+        if text.is_empty() {
+            return Ok(entries);
+        }
+
+        let key_end = text
+            .find(|c: char| c.is_whitespace() || c == '"')
+            .unwrap_or(text.len());
+        let key = parse_number(&text[..key_end], line, "value table key")?;
+
+        let after_key = text[key_end..].trim_start();
+        let unquoted = after_key.strip_prefix('"').ok_or_else(|| {
+            parse_error(line, format!("value table key {key} has no quoted label"))
+        })?;
+        let (label, rest) = unquoted
+            .split_once('"')
+            .ok_or_else(|| parse_error(line, "value table has an unterminated label"))?;
+
+        entries.push((key, label.to_string()));
+        text = rest;
+    }
+}
+
+/// The first whitespace-delimited token and what follows it.
+fn split_token(text: &str) -> Option<(&str, &str)> {
+    let text = text.trim_start();
+    if text.is_empty() {
+        return None;
+    }
+    let end = text.find(char::is_whitespace).unwrap_or(text.len());
+    Some((&text[..end], &text[end..]))
 }
 
 struct Layout {
@@ -491,6 +597,105 @@ BO_ 256 EngineData: 8 ECU
         assert!(message_of(parse(&text)).contains("unknown signal"));
     }
 
+    const GEAR: &str = "BO_ 1 Trans: 8 E\n \
+                        SG_ Gear : 0|8@1- (1,0) [0|0] \"\" X\n \
+                        SG_ Mode : 8|8@1+ (1,0) [0|0] \"\" X\n";
+
+    fn labels(db: &Database, signal: &str) -> Vec<(i64, String)> {
+        db.message(CanId::Standard(1))
+            .unwrap()
+            .signal(signal)
+            .unwrap()
+            .value_table
+            .iter()
+            .map(|(k, l)| (k, l.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn parses_value_tables_onto_their_signal() {
+        let text = format!("{GEAR}\nVAL_ 1 Gear -1 \"Reverse\" 0 \"Neutral\" 1 \"First gear\" ;\n");
+        let db = parse(&text).unwrap();
+        assert_eq!(
+            labels(&db, "Gear"),
+            [
+                (-1, "Reverse".into()),
+                (0, "Neutral".into()),
+                (1, "First gear".into())
+            ]
+        );
+        assert!(labels(&db, "Mode").is_empty());
+    }
+
+    #[test]
+    fn a_later_value_table_replaces_the_earlier_one() {
+        let text = format!("{GEAR}VAL_ 1 Gear 0 \"N\" 1 \"D\";\nVAL_ 1 Gear 2 \"R\";\n");
+        let db = parse(&text).unwrap();
+        assert_eq!(labels(&db, "Gear"), [(2, "R".into())]);
+    }
+
+    #[test]
+    fn value_tables_may_wrap_across_lines_until_the_semicolon() {
+        let text = format!("{GEAR}VAL_ 1 Gear 0 \"N\"\n 1 \"D\"\n 2 \"R\"\n;\n");
+        let db = parse(&text).unwrap();
+        assert_eq!(labels(&db, "Gear").len(), 3);
+
+        // Left open at the end of the file, the record is taken as written.
+        let text = format!("{GEAR}VAL_ 1 Gear 0 \"N\"\n 1 \"D\"\n");
+        assert_eq!(labels(&parse(&text).unwrap(), "Gear").len(), 2);
+    }
+
+    #[test]
+    fn value_tables_accept_the_spacing_variants_cantools_does() {
+        let text = format!("{GEAR}VAL_ 1 Gear 0\"N\"1 \"D\" 2 \"\";\n");
+        let db = parse(&text).unwrap();
+        assert_eq!(
+            labels(&db, "Gear"),
+            [(0, "N".into()), (1, "D".into()), (2, String::new())]
+        );
+
+        let empty = format!("{GEAR}VAL_ 1 Gear ;\n");
+        assert!(labels(&parse(&empty).unwrap(), "Gear").is_empty());
+    }
+
+    #[test]
+    fn value_tables_for_unknown_targets_and_environment_variables_are_dropped() {
+        let text = format!(
+            "{GEAR}VAL_ 2 Gear 0 \"N\";\nVAL_ 1 Nope 0 \"N\";\nVAL_ 2048 Gear 0 \"N\";\nVAL_ EnvVar 0 \"N\";\n"
+        );
+        let db = parse(&text).unwrap();
+        assert!(labels(&db, "Gear").is_empty());
+    }
+
+    #[test]
+    fn value_tables_reach_signals_of_extended_messages() {
+        let text = "BO_ 2566843904 Diag: 8 ECU\n SG_ Code : 0|8@1+ (1,0) [0|255] \"\" X\n\
+                    VAL_ 2566843904 Code 1 \"Overheat\";\n";
+        let db = parse(text).unwrap();
+        let code = db
+            .message(CanId::Extended(0x18FE_EE00))
+            .unwrap()
+            .signal("Code")
+            .unwrap();
+        assert_eq!(code.label(1), Some("Overheat"));
+    }
+
+    #[test]
+    fn reports_the_starting_line_of_a_malformed_value_table() {
+        let text = format!("{GEAR}\nVAL_ 1 Gear 0 \"N\" one \"D\";\n");
+        assert_eq!(line_of(parse(&text)), 5);
+        assert!(message_of(parse(&text)).contains("value table key"));
+
+        let text = format!("{GEAR}\nVAL_ 1 Gear 0 N;\n");
+        assert!(message_of(parse(&text)).contains("quoted label"));
+
+        let text = format!("{GEAR}\nVAL_ 1 Gear 0 \"N\n 1 \"D\";\n");
+        assert_eq!(line_of(parse(&text)), 5);
+
+        let text = format!("{GEAR}\nVAL_ 1;\n");
+        assert!(message_of(parse(&text)).contains("signal name"));
+    }
+
     #[test]
     fn skips_records_it_does_not_understand() {
         let text = "VERSION \"x\"\n\
@@ -501,6 +706,7 @@ BO_ 256 EngineData: 8 ECU
                     SG_ EngineRPM : 0|16@1+ (0.25,0) [0|16383.75] \"rpm\" DASH\n\
                     CM_ SG_ 256 EngineRPM \"Engine speed\";\n\
                     BA_ \"GenMsgCycleTime\" BO_ 256 10;\n\
+                    VAL_TABLE_ OnOff 0 \"Off\" 1 \"On\";\n\
                     BO_TX_BU_ 256 : ECU;\n";
         let db = parse(text).unwrap();
         assert_eq!(db.len(), 1);

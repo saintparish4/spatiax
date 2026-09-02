@@ -10,7 +10,7 @@
 //! confirm that the encoder and decoder agree with each other.
 
 use proptest::prelude::*;
-use spatiax::dbc::{self, ByteOrder, Multiplexing, Signal, ValueType};
+use spatiax::dbc::{self, ByteOrder, Multiplexing, Signal, ValueTable, ValueType};
 use spatiax::decode::{extract_raw, required_bytes};
 use spatiax::encode::insert_raw;
 
@@ -30,6 +30,7 @@ fn signal(start_bit: u16, length: u8, byte_order: ByteOrder, value_type: ValueTy
         max: 0.0,
         unit: String::new(),
         multiplexing: Multiplexing::None,
+        value_table: ValueTable::default(),
     }
 }
 

@@ -74,12 +74,14 @@ Three layers, in increasing order of what they catch:
 3. **Differential testing against `cantools`.** `tests/differential.rs`
    generates random but valid DBCs (standard and extended identifiers,
    payloads from 1 to 64 bytes, non-overlapping Intel and Motorola signals,
-   signed and unsigned, assorted scalings) and random frames, decodes them
-   with both `spatiax` and the Python reference, and requires exact
-   agreement on raw values and float-noise agreement on physical values.
-   Re-encoding the raw values must also reproduce the bytes `cantools`
-   produces. The test refuses to pass with fewer than 100,000 decoded
-   signal values; CI runs 500,000 and fails if the oracle is missing.
+   signed and unsigned, assorted scalings, multiplexed pages, value tables)
+   and random frames, decodes them with both `spatiax` and the Python
+   reference, and requires exact agreement on raw values, on which signals
+   are present, and on labels, with float-noise agreement on physical
+   values. Re-encoding the raw values must also reproduce the bytes
+   `cantools` produces. The test refuses to pass with fewer than 100,000
+   decoded signal values; CI runs 500,000 and fails if the oracle is
+   missing.
 
 Layer 3 is the differentiator. `cantools` is what motorsport data engineers
 already reach for, so agreement with it is a claim anyone can evaluate in
@@ -104,7 +106,7 @@ and CI runs that test.
 |---|---|
 | CAN frame and identifier types | Done — `frame::tests`, `tests/public_api.rs` |
 | DBC extended-identifier handling | Done — `dbc_id_with_bit31_set_is_extended_and_strips_the_flag` |
-| DBC parser (`BO_` / `SG_` records) | Done — `dbc::parser::tests`, `fixture_parses_all_messages_and_signals` |
+| DBC parser (`BO_` / `SG_` / `VAL_` records) | Done — `dbc::parser::tests`, `fixture_parses_all_messages_and_signals` |
 | Bit extraction, Intel byte order | Done — `vector_a_intel_word_is_little_endian` |
 | Bit extraction, Motorola byte order | Done — `vector_b_motorola_word_is_big_endian`, `vector_c`, `vector_f` |
 | Signed signals, factor/offset scaling | Done — `vector_d_signed_signal_sign_extends_from_its_own_width`, `vector_e` |
@@ -115,7 +117,8 @@ and CI runs that test.
 | Differential test vs. `cantools` | Done — `tests/differential.rs`, ≥100,000 generated cases enforced, 500,000 in CI |
 | Multiplexed signals (simple multiplexing) | Done — `the_multiplexor_value_selects_which_page_decodes`, `vector_g`, multiplexed messages in `tests/differential.rs` |
 | Extended multiplexing (`m<N>M`, `SG_MUL_VAL_` ranges) | Rejected at parse time with a clear error, rather than decoded wrongly |
-| Value tables, CAN FD frame I/O | Planned |
+| Value tables (`VAL_`, `Decoded::label`) | Done — `parses_value_tables_onto_their_signal`, `labels_match_the_sign_interpreted_raw_value`, labels compared in `tests/differential.rs` (≥10,000 enforced) |
+| CAN FD frame I/O | Planned |
 | SocketCAN live capture, `candump` replay | Planned |
 | Benchmarks | Planned |
 | MoTeC `.ld` export | Stretch goal |
