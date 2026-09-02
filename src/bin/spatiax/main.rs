@@ -8,6 +8,8 @@
 
 mod check;
 mod decode;
+#[cfg(all(feature = "socketcan", target_os = "linux"))]
+mod live;
 mod output;
 
 use std::path::{Path, PathBuf};
@@ -51,12 +53,25 @@ enum Command {
         /// DBC file to check
         dbc: PathBuf,
     },
+    /// Decode frames as they arrive on a SocketCAN interface
+    #[cfg(all(feature = "socketcan", target_os = "linux"))]
+    Live {
+        /// DBC file describing the bus
+        dbc: PathBuf,
+        /// Interface to listen on, such as `can0`
+        iface: String,
+        /// Output format
+        #[arg(long, value_enum, default_value_t = output::Format::Text)]
+        format: output::Format,
+    },
 }
 
 fn main() -> ExitCode {
     let outcome = match Cli::parse().command {
         Command::Decode { dbc, log, format } => decode::run(&dbc, &log, format),
         Command::Check { dbc } => check::run(&dbc),
+        #[cfg(all(feature = "socketcan", target_os = "linux"))]
+        Command::Live { dbc, iface, format } => live::run(&dbc, &iface, format),
     };
     outcome.unwrap_or_else(|message| {
         eprintln!("spatiax: {message}");

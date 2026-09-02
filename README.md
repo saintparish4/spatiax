@@ -8,13 +8,13 @@ the evidence that it does so correctly**: hand-computed reference vectors,
 exhaustive property tests, and a differential harness that checks every
 decode against the reference implementation the industry already trusts.
 
-> **Status: early.** The parser, decoder, encoder, `candump` replay, and the
-> `spatiax` command-line tool exist and are backed by the three layers of
-> evidence below — hand-computed vectors, property tests over every layout,
-> and a differential test against `cantools` that CI runs on every push.
-> Live capture and performance numbers do not exist yet. Nothing below is
-> claimed as working unless the status table says so. See
-> [Current state](#current-state).
+> **Status: early.** The parser, decoder, encoder, `candump` replay, live
+> SocketCAN capture, and the `spatiax` command-line tool exist and are
+> backed by the three layers of evidence below — hand-computed vectors,
+> property tests over every layout, and a differential test against
+> `cantools` that CI runs on every push. Performance numbers do not exist
+> yet. Nothing below is claimed as working unless the status table says so.
+> See [Current state](#current-state).
 
 ---
 
@@ -66,12 +66,17 @@ spatiax decode car.dbc session.log                # text, grouped by frame
 spatiax decode car.dbc session.log --format csv   # one row per signal
 candump -L can0 | spatiax decode car.dbc -        # from a pipe
 spatiax check car.dbc                             # layout problems
+
+cargo install --path . --features socketcan       # Linux only
+spatiax live car.dbc can0                         # decode as frames arrive
 ```
 
 `decode` reads the format `candump -l` writes. Frames the DBC does not
 describe are counted rather than printed; a malformed log line is reported
-on stderr with its line number and reading carries on. The text form looks
-like this:
+on stderr with its line number and reading carries on. `live` does the same
+for frames arriving on a SocketCAN interface, stamped with the kernel's
+receive time — the clock `candump` logs — so a live decode and a later
+replay of the same session agree. The text form looks like this:
 
 ```text
 1700000000.000500 300 SuspensionData
@@ -154,11 +159,11 @@ and CI runs that test.
 | Multiplexed signals (simple multiplexing) | Done — `the_multiplexor_value_selects_which_page_decodes`, `vector_g`, multiplexed messages in `tests/differential.rs` |
 | Extended multiplexing (`m<N>M`, `SG_MUL_VAL_` ranges) | Rejected at parse time with a clear error, rather than decoded wrongly |
 | Value tables (`VAL_`, `Decoded::label`) | Done — `parses_value_tables_onto_their_signal`, `labels_match_the_sign_interpreted_raw_value`, labels compared in `tests/differential.rs` (≥10,000 enforced) |
-| CAN FD frame I/O | Planned |
+| CAN FD frame I/O | Done — FD frames read from `candump` logs (`reads_a_can_fd_frame_and_drops_its_flags_digit`) and from SocketCAN (`an_fd_frame_with_an_extended_identifier_carries_all_its_bytes`, `tests/live.rs`) |
 | `candump` log replay (`candump::LogReader`) | Done — `candump::tests`, `tests/candump.rs` replays `fixtures/gt3_sample.log` |
 | DBC layout check (`dbc::check`) | Done — `dbc::check::tests` |
 | `spatiax` binary (`decode`, `check`) | Done — `tests/cli.rs` runs the built binary end to end |
-| SocketCAN live capture | Planned |
+| SocketCAN live capture (`live::Capture`, `spatiax live`) | Done — `live::tests`, `tests/live.rs` sends frames over `vcan0` in CI and reads them back through both |
 | Benchmarks | Planned |
 | MoTeC `.ld` export | Stretch goal |
 
@@ -243,9 +248,17 @@ No system libraries, no ML runtimes, no Docker. The library depends on
 `proptest` and `rand` are dev-dependencies. Requires Rust 1.85 or later.
 The differential test additionally wants Python 3 with `cantools` and skips
 with a message when it cannot find one — see
-[Correctness strategy](#correctness-strategy) for the two-line setup. Live
-CAN capture (Linux, `socketcan`) arrives later behind a feature flag, so the
-default build stays portable on macOS and Windows.
+[Correctness strategy](#correctness-strategy) for the two-line setup.
+
+Live capture is behind the `socketcan` feature and only does anything on
+Linux, so the default build stays portable on macOS and Windows. Its tests
+need a virtual CAN interface and skip unless `SPATIAX_VCAN` names one:
+
+```bash
+sudo modprobe vcan && sudo ip link add dev vcan0 type vcan
+sudo ip link set vcan0 mtu 72 && sudo ip link set up vcan0
+SPATIAX_VCAN=vcan0 cargo test --features socketcan --test live
+```
 
 ## Licence
 

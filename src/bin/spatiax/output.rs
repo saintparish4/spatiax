@@ -62,7 +62,7 @@ impl<W: Write> Writer<W> {
         }
     }
 
-    pub fn finish(&mut self) -> io::Result<()> {
+    pub fn flush(&mut self) -> io::Result<()> {
         self.out.flush()
     }
 

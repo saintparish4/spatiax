@@ -15,10 +15,16 @@ default = ["cli"]
 # The `spatiax` binary. Library users can turn it off to keep clap out of
 # their dependency tree.
 cli = ["dep:clap"]
+# Live capture from a SocketCAN interface: the `live` module and, with
+# `cli`, the `spatiax live` command. Does nothing off Linux.
+socketcan = ["dep:socketcan"]
 
 [dependencies]
 thiserror = "2"
 clap = { version = "4", features = ["derive"], optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+socketcan = { version = "3", default-features = false, optional = true }
 
 [dev-dependencies]
 proptest = "1"

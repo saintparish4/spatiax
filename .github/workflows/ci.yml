@@ -27,7 +27,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
       - name: Clippy (library only, no clap)
         run: cargo clippy --all-targets --no-default-features -- -D warnings
@@ -38,7 +38,30 @@ jobs:
           PROPTEST_CASES: 16384
 
       - name: Docs
-        run: cargo doc --no-deps
+        run: cargo doc --no-deps --all-features
+
+  live:
+    name: live capture on vcan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Bring up a virtual CAN interface
+        run: |
+          sudo modprobe vcan
+          sudo ip link add dev vcan0 type vcan
+          sudo ip link set vcan0 mtu 72
+          sudo ip link set up vcan0
+
+      - name: Capture from vcan0 with the library and the binary
+        run: cargo test --features socketcan --test live -- --nocapture
+        env:
+          SPATIAX_VCAN: vcan0
+          SPATIAX_REQUIRE_VCAN: "1"
 
   differential:
     name: differential vs cantools
@@ -71,4 +94,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.85.0
       - uses: Swatinem/rust-cache@v2
       - name: Build on MSRV
-        run: cargo build --all-targets
+        run: cargo build --all-targets --all-features

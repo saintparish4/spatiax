@@ -22,11 +22,9 @@ pub fn run(dbc: &Path, log: &Path, format: Format) -> Outcome {
     let mut writer = Writer::new(BufWriter::new(io::stdout().lock()), format);
     let mut tally = Tally::default();
 
-    let written = replay(&db, reader, &mut writer, &mut tally);
-    match written {
+    match replay(&db, reader, &mut writer, &mut tally) {
         Ok(()) => {}
-        // Downstream closed the pipe (`| head`); nothing is wrong on this side.
-        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => return Ok(ExitCode::SUCCESS),
+        Err(e) if closed_early(&e) => return Ok(ExitCode::SUCCESS),
         Err(e) => return Err(format!("cannot write output: {e}")),
     }
 
@@ -62,10 +60,11 @@ fn replay<W: Write>(
             }
         }
     }
-    writer.finish()
+    writer.flush()
 }
 
-fn decode_frame<W: Write>(
+/// Decode one frame and write whatever it yields.
+pub fn decode_frame<W: Write>(
     db: &Database,
     frame: &CanFrame,
     writer: &mut Writer<W>,
@@ -86,12 +85,18 @@ fn decode_frame<W: Write>(
     Ok(())
 }
 
+/// Downstream closed the pipe (`| head`); nothing is wrong on this side.
+pub fn closed_early(e: &io::Error) -> bool {
+    e.kind() == io::ErrorKind::BrokenPipe
+}
+
+/// What happened over a run, for the one-line summary on stderr.
 #[derive(Default)]
-struct Tally {
-    frames: usize,
-    unknown: usize,
-    unfit: usize,
-    bad_lines: usize,
+pub struct Tally {
+    pub frames: usize,
+    pub unknown: usize,
+    pub unfit: usize,
+    pub bad_lines: usize,
 }
 
 impl std::fmt::Display for Tally {
