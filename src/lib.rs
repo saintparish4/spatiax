@@ -8,8 +8,8 @@
 //!
 //! What exists today: a DBC parser for `BO_`/`SG_` records, bit-exact
 //! extraction and insertion for Intel and Motorola byte orders, signed and
-//! unsigned signals, factor/offset scaling, and extended identifiers.
-//! Multiplexed signals are parsed but not yet filtered by multiplexor value.
+//! unsigned signals, factor/offset scaling, extended identifiers, and
+//! multiplexed messages (simple multiplexing: one `M` per message).
 //!
 //! The evidence: hand-computed reference vectors, property tests over every
 //! layout from 1 to 64 bits, and a differential test that decodes generated

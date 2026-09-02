@@ -6,6 +6,12 @@
 //! noise. The encoder is checked the same way: re-encoding the raw values
 //! must reproduce the bytes `cantools` produces.
 //!
+//! About a third of the generated messages are multiplexed, with pages that
+//! overlap one another, so the set of signals each side considers present is
+//! compared too. Multiplexors are generated unscaled because `cantools`
+//! selects the page by the *scaled* multiplexor value when scaling is on,
+//! which is a quirk rather than something to agree with.
+//!
 //! The oracle needs Python 3 with `cantools` importable. When it is not
 //! available the test skips with a message, unless `SPATIAX_REQUIRE_ORACLE`
 //! is set — CI sets it, so this cannot silently degrade into a no-op there.
@@ -20,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use rand::rngs::StdRng;
-use rand::seq::IndexedRandom;
+use rand::seq::{IndexedRandom, SliceRandom};
 use rand::{Rng, SeedableRng};
 use spatiax::dbc::{self, ByteOrder, Database, Message, Multiplexing, Signal, ValueType};
 use spatiax::encode::insert_raw;
@@ -31,6 +37,9 @@ const MINIMUM_CASES: usize = 100_000;
 const DEFAULT_CASE_TARGET: usize = 150_000;
 const FRAMES_PER_MESSAGE: usize = 48;
 const MAX_MISMATCHES_REPORTED: usize = 20;
+const MULTIPLEXED_MESSAGE_RATE: f64 = 0.35;
+/// How often a frame of a multiplexed message is steered onto a defined page.
+const CLAIMED_SELECTOR_RATE: f64 = 0.85;
 
 /// Classic CAN lengths weighted towards 8, plus every CAN FD length.
 const DLCS: &[usize] = &[
@@ -47,6 +56,8 @@ struct Generated {
     text: String,
     /// Per message, in DBC order: its name, identifier, and frame payloads.
     frames: Vec<(String, CanId, Vec<Vec<u8>>)>,
+    /// Signal values the frames are expected to produce; the loop that
+    /// decides how many databases to generate works from this estimate.
     cases: usize,
 }
 
@@ -70,8 +81,9 @@ fn spatiax_agrees_with_cantools_on_generated_databases() {
     for (index, generated) in databases.iter().enumerate() {
         let db = dbc::parse(&generated.text).expect("generated DBC parses");
         let expected = read_expected(&dir.join(format!("{index:03}.expected")));
-        mismatches.extend(compare_database(&db, generated, &expected, index));
-        cases += generated.cases;
+        let comparison = Comparison::new(&db, &expected, index).run(generated);
+        mismatches.extend(comparison.mismatches);
+        cases += comparison.cases;
     }
 
     report(&mismatches, seed, &dir, cases);
@@ -142,12 +154,13 @@ fn run_oracle(python: &Path, dir: &Path) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
-/// `S <frame> <signal> <raw> <value>` and `E <frame> <hex>` lines, grouped
-/// by frame index.
+/// `S <frame> <signal> <raw> <value>`, `E <frame> <hex>`, and
+/// `U <frame> <selector>` lines, grouped by frame index.
 #[derive(Default)]
 struct Expected {
     signals: HashMap<usize, HashMap<String, (i128, f64)>>,
     encoded: HashMap<usize, Vec<u8>>,
+    unclaimed: HashMap<usize, i128>,
 }
 
 fn read_expected(path: &Path) -> Expected {
@@ -169,6 +182,9 @@ fn read_expected(path: &Path) -> Expected {
             "E" => {
                 expected.encoded.insert(frame, unhex(fields[2]));
             }
+            "U" => {
+                expected.unclaimed.insert(frame, fields[2].parse().unwrap());
+            }
             other => panic!("unexpected oracle record `{other}`"),
         }
     }
@@ -177,93 +193,136 @@ fn read_expected(path: &Path) -> Expected {
 
 // ------------------------------------------------------------ comparison
 
-fn compare_database(
-    db: &Database,
-    generated: &Generated,
-    expected: &Expected,
+struct Comparison<'a> {
+    db: &'a Database,
+    expected: &'a Expected,
     db_index: usize,
-) -> Vec<String> {
-    let mut mismatches = Vec::new();
-    let mut frame_index = 0;
-    for (name, id, payloads) in &generated.frames {
-        let message = db.message(*id).expect("generated message parses");
-        assert_eq!(&message.name, name);
-        for payload in payloads {
-            let context = format!("db {db_index:03} frame {frame_index} ({name})");
-            mismatches.extend(compare_frame(
-                db,
-                message,
-                payload,
-                expected,
-                frame_index,
-                &context,
-            ));
-            frame_index += 1;
-        }
-    }
-    mismatches
+    mismatches: Vec<String>,
+    cases: usize,
 }
 
-fn compare_frame(
-    db: &Database,
-    message: &Message,
-    payload: &[u8],
-    expected: &Expected,
-    frame_index: usize,
-    context: &str,
-) -> Vec<String> {
-    let mut mismatches = Vec::new();
-    let frame = CanFrame::new(message.id, payload, 0).unwrap();
-    let want = &expected.signals[&frame_index];
+impl<'a> Comparison<'a> {
+    fn new(db: &'a Database, expected: &'a Expected, db_index: usize) -> Self {
+        Self {
+            db,
+            expected,
+            db_index,
+            mismatches: Vec::new(),
+            cases: 0,
+        }
+    }
 
-    let mut seen = 0;
-    for decoded in db.decode_frame(&frame).expect("id is in the database") {
-        let decoded = decoded.expect("generated signals fit their frames");
-        seen += 1;
-        let name = &decoded.signal.name;
-        let Some(&(want_raw, want_value)) = want.get(name) else {
-            mismatches.push(format!("{context} {name}: cantools reported no value"));
-            continue;
-        };
-        let got_raw = as_reference_raw(decoded.raw, decoded.signal);
+    fn run(mut self, generated: &Generated) -> Self {
+        let mut frame_index = 0;
+        for (name, id, payloads) in &generated.frames {
+            let message = self.db.message(*id).expect("generated message parses");
+            assert_eq!(&message.name, name);
+            for payload in payloads {
+                let context = format!("db {:03} frame {frame_index} ({name})", self.db_index);
+                self.frame(message, payload, frame_index, &context);
+                frame_index += 1;
+            }
+        }
+        self
+    }
+
+    fn frame(&mut self, message: &Message, payload: &[u8], frame_index: usize, context: &str) {
+        let frame = CanFrame::new(message.id, payload, 0).unwrap();
+        let decoded: Vec<_> = self
+            .db
+            .decode_frame(&frame)
+            .expect("id is in the database")
+            .map(|d| d.expect("generated signals fit their frames"))
+            .collect();
+
+        if let Some(&selector) = self.expected.unclaimed.get(&frame_index) {
+            self.unclaimed_frame(&decoded, selector, context);
+            return;
+        }
+
+        let want = &self.expected.signals[&frame_index];
+        for d in &decoded {
+            match want.get(&d.signal.name) {
+                Some(&(raw, value)) => self.signal(d, raw, value, context),
+                None => self.mismatch(format!(
+                    "{context} {}: present here, absent in cantools",
+                    d.signal.name
+                )),
+            }
+        }
+        if decoded.len() != want.len() {
+            self.mismatch(format!(
+                "{context}: decoded {} signals, cantools decoded {}",
+                decoded.len(),
+                want.len()
+            ));
+        }
+
+        let re_encoded = encode_all(&decoded, payload.len());
+        if re_encoded != self.expected.encoded[&frame_index] {
+            self.mismatch(format!(
+                "{context}: re-encoded {} != cantools {}",
+                hex(&re_encoded),
+                hex(&self.expected.encoded[&frame_index])
+            ));
+        }
+    }
+
+    fn signal(&mut self, d: &dbc::Decoded<'_>, want_raw: i128, want_value: f64, context: &str) {
+        self.cases += 1;
+        let got_raw = as_reference_raw(d.raw, d.signal);
         if got_raw != want_raw {
-            mismatches.push(format!(
-                "{context} {name}: raw {got_raw} != cantools {want_raw} ({})",
-                describe(decoded.signal)
+            self.mismatch(format!(
+                "{context} {}: raw {got_raw} != cantools {want_raw} ({})",
+                d.signal.name,
+                describe(d.signal)
             ));
-        } else if !close(decoded.value, want_value) {
-            mismatches.push(format!(
-                "{context} {name}: value {} != cantools {want_value} ({})",
-                decoded.value,
-                describe(decoded.signal)
+        } else if !close(d.value, want_value) {
+            self.mismatch(format!(
+                "{context} {}: value {} != cantools {want_value} ({})",
+                d.signal.name,
+                d.value,
+                describe(d.signal)
             ));
         }
     }
-    if seen != want.len() {
-        mismatches.push(format!(
-            "{context}: decoded {seen} signals, cantools decoded {}",
-            want.len()
-        ));
+
+    /// `cantools` refused the frame because no page matches the selector it
+    /// saw. I must have read the same selector and yielded no page at all.
+    fn unclaimed_frame(&mut self, decoded: &[dbc::Decoded<'_>], selector: i128, context: &str) {
+        self.cases += 1;
+        let multiplexor = decoded
+            .iter()
+            .find(|d| d.signal.multiplexing == Multiplexing::Multiplexor);
+        match multiplexor {
+            Some(m) if i128::from(m.raw) != selector => self.mismatch(format!(
+                "{context}: multiplexor {} != cantools {selector}",
+                m.raw
+            )),
+            Some(_) => {}
+            None => self.mismatch(format!("{context}: no multiplexor decoded")),
+        }
+        for d in decoded {
+            if let Multiplexing::Multiplexed(n) = d.signal.multiplexing {
+                self.mismatch(format!(
+                    "{context} {}: page {n} decoded, cantools found no page for {selector}",
+                    d.signal.name
+                ));
+            }
+        }
     }
 
-    let re_encoded = encode_all(message, payload);
-    if re_encoded != expected.encoded[&frame_index] {
-        mismatches.push(format!(
-            "{context}: re-encoded {} != cantools {}",
-            hex(&re_encoded),
-            hex(&expected.encoded[&frame_index])
-        ));
+    fn mismatch(&mut self, text: String) {
+        self.mismatches.push(text);
     }
-    mismatches
 }
 
-/// Insert every signal's raw value into a zeroed payload, as `cantools`
-/// does with `padding=False`.
-fn encode_all(message: &Message, payload: &[u8]) -> Vec<u8> {
-    let mut out = vec![0u8; payload.len()];
-    for signal in &message.signals {
-        let raw = spatiax::decode::extract_raw(payload, signal).unwrap();
-        insert_raw(&mut out, signal, raw).unwrap();
+/// Insert every decoded signal's raw value into a zeroed payload, as
+/// `cantools` does with `padding=False`.
+fn encode_all(decoded: &[dbc::Decoded<'_>], len: usize) -> Vec<u8> {
+    let mut out = vec![0u8; len];
+    for d in decoded {
+        insert_raw(&mut out, d.signal, d.raw).unwrap();
     }
     out
 }
@@ -297,8 +356,12 @@ fn describe(s: &Signal) -> String {
         ValueType::Signed => '-',
     };
     format!(
-        "{}|{}{order}{sign} ({},{})",
-        s.start_bit, s.length, s.factor, s.offset
+        "{}{}|{}{order}{sign} ({},{})",
+        multiplexing_token(s),
+        s.start_bit,
+        s.length,
+        s.factor,
+        s.offset
     )
 }
 
@@ -347,11 +410,14 @@ fn generate_database(rng: &mut StdRng) -> Generated {
         }
         let message = generate_message(rng, id, frames.len());
         let payloads: Vec<_> = (0..FRAMES_PER_MESSAGE)
-            .map(|_| random_payload(rng, usize::from(message.dlc)))
+            .map(|_| random_frame(rng, &message))
             .collect();
 
         text.push_str(&render_message(&message));
-        cases += payloads.len() * message.signals.len();
+        cases += payloads
+            .iter()
+            .map(|p| message.decode(p).count())
+            .sum::<usize>();
         frames.push((message.name, id, payloads));
     }
 
@@ -370,24 +436,34 @@ fn random_id(rng: &mut StdRng) -> CanId {
     }
 }
 
-/// A message whose signals fit the DLC and do not overlap — both conditions
-/// `cantools` enforces in strict mode.
+/// A message whose signals fit the DLC and whose signals present together
+/// never overlap — both conditions `cantools` enforces in strict mode.
+/// Signals on different pages of a multiplexed message may overlap, and
+/// usually do.
 fn generate_message(rng: &mut StdRng, id: CanId, index: usize) -> Message {
     let dlc = *DLCS.choose(rng).unwrap();
-    let mut occupied = vec![false; dlc * 8];
+    let mut layout = Layout::new(dlc * 8);
     let mut signals = Vec::new();
-    let wanted = rng.random_range(1..=16);
 
-    // The first attempt always succeeds on an empty payload, so every message
-    // carries at least one signal; later attempts may collide and be skipped.
-    for _ in 0..64 {
-        if signals.len() == wanted {
-            break;
+    let multiplexor = rng
+        .random_bool(MULTIPLEXED_MESSAGE_RATE)
+        .then(|| layout.place_multiplexor(rng));
+    let plain = match multiplexor {
+        Some(_) => rng.random_range(0..=6),
+        None => rng.random_range(1..=16),
+    };
+    signals.extend(layout.place_signals(rng, plain, Multiplexing::None));
+    if let Some(mut multiplexor) = multiplexor {
+        let pages = layout.place_pages(rng, &multiplexor);
+        // A one-byte payload can be full before any page fits; a multiplexor
+        // with nothing to select is then just a plain signal.
+        if pages.is_empty() {
+            multiplexor.multiplexing = Multiplexing::None;
         }
-        if let Some(signal) = try_place_signal(rng, &mut occupied, signals.len()) {
-            signals.push(signal);
-        }
+        signals.extend(pages);
+        signals.push(multiplexor);
     }
+    signals.shuffle(rng);
 
     Message {
         id,
@@ -398,45 +474,125 @@ fn generate_message(rng: &mut StdRng, id: CanId, index: usize) -> Message {
     }
 }
 
-fn try_place_signal(rng: &mut StdRng, occupied: &mut [bool], index: usize) -> Option<Signal> {
-    let bits = occupied.len();
-    let byte_order = if rng.random_bool(0.5) {
-        ByteOrder::Intel
-    } else {
-        ByteOrder::Motorola
-    };
-    let start = rng.random_range(0..bits);
-    let room = match byte_order {
-        ByteOrder::Intel => bits - start,
-        ByteOrder::Motorola => (start % 8 + 1) + (bits - start / 8 * 8 - 8),
-    };
-    let length = random_length(rng, room.min(64));
+/// Bit occupancy of a payload while signals are being placed into it.
+struct Layout {
+    occupied: Vec<bool>,
+    next_name: usize,
+}
 
-    let positions = positions(start, length, byte_order);
-    if positions.iter().any(|&p| occupied[p]) {
-        return None;
-    }
-    for &p in &positions {
-        occupied[p] = true;
+impl Layout {
+    fn new(bits: usize) -> Self {
+        Self {
+            occupied: vec![false; bits],
+            next_name: 0,
+        }
     }
 
-    Some(Signal {
-        name: format!("S{index}"),
-        start_bit: start as u16,
-        length: length as u8,
-        byte_order,
-        value_type: if rng.random_bool(0.5) {
-            ValueType::Unsigned
+    /// Up to `wanted` non-overlapping signals; attempts that collide are
+    /// dropped. The first attempt on an empty payload always succeeds.
+    fn place_signals(
+        &mut self,
+        rng: &mut StdRng,
+        wanted: usize,
+        multiplexing: Multiplexing,
+    ) -> Vec<Signal> {
+        let mut placed = Vec::new();
+        for _ in 0..64 {
+            if placed.len() == wanted {
+                break;
+            }
+            if let Some(signal) = self.try_place(rng, multiplexing) {
+                placed.push(signal);
+            }
+        }
+        placed
+    }
+
+    /// Placed first, so it always fits somewhere.
+    fn place_multiplexor(&mut self, rng: &mut StdRng) -> Signal {
+        loop {
+            if let Some(signal) = self.try_place(rng, Multiplexing::Multiplexor) {
+                return signal;
+            }
+        }
+    }
+
+    /// Each page starts from the occupancy the plain signals and multiplexor
+    /// left, so pages overlap one another but never those.
+    fn place_pages(&mut self, rng: &mut StdRng, multiplexor: &Signal) -> Vec<Signal> {
+        let base = self.occupied.clone();
+        let mut signals = Vec::new();
+        for selector in random_selectors(rng, multiplexor.length) {
+            self.occupied.clone_from(&base);
+            let wanted = rng.random_range(1..=4);
+            signals.extend(self.place_signals(rng, wanted, Multiplexing::Multiplexed(selector)));
+        }
+        signals
+    }
+
+    fn try_place(&mut self, rng: &mut StdRng, multiplexing: Multiplexing) -> Option<Signal> {
+        let bits = self.occupied.len();
+        let is_multiplexor = multiplexing == Multiplexing::Multiplexor;
+        let byte_order = if rng.random_bool(0.5) {
+            ByteOrder::Intel
         } else {
-            ValueType::Signed
-        },
-        factor: random_scale(rng, FACTORS),
-        offset: random_scale(rng, OFFSETS),
-        min: 0.0,
-        max: 0.0,
-        unit: String::new(),
-        multiplexing: Multiplexing::None,
-    })
+            ByteOrder::Motorola
+        };
+        let start = rng.random_range(0..bits);
+        let room = match byte_order {
+            ByteOrder::Intel => bits - start,
+            ByteOrder::Motorola => (start % 8 + 1) + (bits - start / 8 * 8 - 8),
+        };
+        let max_length = if is_multiplexor { 8 } else { 64 };
+        let length = random_length(rng, room.min(max_length));
+
+        let positions = positions(start, length, byte_order);
+        if positions.iter().any(|&p| self.occupied[p]) {
+            return None;
+        }
+        for &p in &positions {
+            self.occupied[p] = true;
+        }
+
+        let name = format!("S{}", self.next_name);
+        self.next_name += 1;
+        Some(Signal {
+            name,
+            start_bit: start as u16,
+            length: length as u8,
+            byte_order,
+            value_type: if is_multiplexor || rng.random_bool(0.5) {
+                ValueType::Unsigned
+            } else {
+                ValueType::Signed
+            },
+            factor: if is_multiplexor {
+                1.0
+            } else {
+                random_scale(rng, FACTORS)
+            },
+            offset: if is_multiplexor {
+                0.0
+            } else {
+                random_scale(rng, OFFSETS)
+            },
+            min: 0.0,
+            max: 0.0,
+            unit: String::new(),
+            multiplexing,
+        })
+    }
+}
+
+/// Between one and four distinct page selectors a multiplexor of `bits`
+/// bits can carry.
+fn random_selectors(rng: &mut StdRng, bits: u8) -> Vec<u16> {
+    let range = 1usize << bits;
+    let count = rng.random_range(1..=4.min(range));
+    rand::seq::index::sample(rng, range, count)
+        .into_iter()
+        .map(|selector| selector as u16)
+        .collect()
 }
 
 /// Lengths biased towards the small widths real DBCs use, while still
@@ -474,6 +630,30 @@ fn positions(start: usize, length: usize, byte_order: ByteOrder) -> Vec<usize> {
     }
 }
 
+/// A random payload, usually steered onto one of the message's pages so the
+/// multiplexed signals actually get exercised.
+fn random_frame(rng: &mut StdRng, message: &Message) -> Vec<u8> {
+    let mut payload = random_payload(rng, usize::from(message.dlc));
+    let Some(multiplexor) = message.multiplexor() else {
+        return payload;
+    };
+    if rng.random_bool(CLAIMED_SELECTOR_RATE) {
+        let claimed: Vec<u16> = message
+            .signals
+            .iter()
+            .filter_map(|s| match s.multiplexing {
+                Multiplexing::Multiplexed(n) => Some(n),
+                _ => None,
+            })
+            .collect();
+        let selector = *claimed
+            .choose(rng)
+            .expect("every multiplexed message has a page");
+        insert_raw(&mut payload, multiplexor, u64::from(selector)).unwrap();
+    }
+    payload
+}
+
 fn random_payload(rng: &mut StdRng, len: usize) -> Vec<u8> {
     let mut payload = vec![0u8; len];
     match rng.random_range(0..10) {
@@ -505,13 +685,28 @@ fn render_message(message: &Message) -> String {
         };
         writeln!(
             out,
-            " SG_ {} : {}|{}@{order}{sign} ({},{}) [0|0] \"\" Node",
-            s.name, s.start_bit, s.length, s.factor, s.offset
+            " SG_ {} {}: {}|{}@{order}{sign} ({},{}) [0|0] \"\" Node",
+            s.name,
+            multiplexing_token(s),
+            s.start_bit,
+            s.length,
+            s.factor,
+            s.offset
         )
         .unwrap();
     }
     out.push('\n');
     out
+}
+
+/// The DBC token for a signal's multiplexing role, with a trailing space
+/// when there is one.
+fn multiplexing_token(s: &Signal) -> String {
+    match s.multiplexing {
+        Multiplexing::None => String::new(),
+        Multiplexing::Multiplexor => "M ".into(),
+        Multiplexing::Multiplexed(n) => format!("m{n} "),
+    }
 }
 
 // ------------------------------------------------------------- utilities

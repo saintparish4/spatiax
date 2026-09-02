@@ -4,10 +4,11 @@
 //! the thing a caller most needs on failure is the line number, which I would
 //! lose behind a parser-combinator stack.
 //!
-//! Records understood: `BO_` (message) and `SG_` (signal). Everything else —
-//! `CM_`, `BA_`, `BA_DEF_`, `VAL_`, `BO_TX_BU_`, `BU_`, `NS_`, `BS_` — is
-//! skipped, because a database that refuses to load over a comment record is
-//! useless in a garage.
+//! Records understood: `BO_` (message), `SG_` (signal), and `SG_MUL_VAL_`
+//! (checked against the `SG_` tokens, not stored). Everything else — `CM_`,
+//! `BA_`, `BA_DEF_`, `VAL_`, `BO_TX_BU_`, `BU_`, `NS_`, `BS_` — is skipped,
+//! because a database that refuses to load over a comment record is useless
+//! in a garage.
 
 use std::str::FromStr;
 
@@ -26,36 +27,54 @@ pub fn parse(text: &str) -> Result<Database> {
 
         // The trailing space keeps `BO_` from matching `BO_TX_BU_`.
         if let Some(rest) = line.strip_prefix("BO_ ") {
-            if let Some(finished) = current.replace(parse_message(rest, line_no)?) {
-                db.insert(finished);
-            }
+            flush(&mut current, &mut db);
+            current = Some(parse_message(rest, line_no)?);
         } else if let Some(rest) = line.strip_prefix("SG_ ") {
             let message = current
                 .as_mut()
                 .ok_or_else(|| parse_error(line_no, "SG_ record appears before any BO_ message"))?;
-            message.signals.push(parse_signal(rest, line_no)?);
+            push_signal(message, parse_signal(rest, line_no)?, line_no)?;
+        } else if let Some(rest) = line.strip_prefix("SG_MUL_VAL_ ") {
+            flush(&mut current, &mut db);
+            check_multiplexer_values(&db, rest, line_no)?;
         }
     }
 
-    if let Some(finished) = current {
+    flush(&mut current, &mut db);
+    Ok(db)
+}
+
+fn flush(current: &mut Option<Message>, db: &mut Database) {
+    if let Some(finished) = current.take() {
         db.insert(finished);
     }
-    Ok(db)
+}
+
+fn push_signal(message: &mut Message, signal: Signal, line: usize) -> Result<()> {
+    if signal.multiplexing == Multiplexing::Multiplexor {
+        if let Some(existing) = message.multiplexor() {
+            return Err(parse_error(
+                line,
+                format!(
+                    "message `{}` already has multiplexor `{}`; extended multiplexing is not supported",
+                    message.name, existing.name
+                ),
+            ));
+        }
+    }
+    message.signals.push(signal);
+    Ok(())
 }
 
 /// `<id> <Name>: <dlc> <Sender>`
 fn parse_message(rest: &str, line: usize) -> Result<Message> {
     let mut tokens = rest.split_whitespace();
 
-    let id_token = tokens
-        .next()
-        .ok_or_else(|| parse_error(line, "message record has no identifier"))?;
+    let id_token = expect_token(&mut tokens, line, "message record has no identifier")?;
     let raw_id = parse_number(id_token, line, "message identifier")?;
     let id = CanId::from_dbc(raw_id).map_err(|e| parse_error(line, e.to_string()))?;
 
-    let name_token = tokens
-        .next()
-        .ok_or_else(|| parse_error(line, "message record has no name"))?;
+    let name_token = expect_token(&mut tokens, line, "message record has no name")?;
     let name = name_token.trim_end_matches(':').to_string();
 
     // The colon is usually attached to the name but may stand alone.
@@ -119,6 +138,10 @@ fn parse_multiplexing(token: &str, line: usize) -> Result<Multiplexing> {
         return Ok(Multiplexing::Multiplexor);
     }
     match token.strip_prefix('m') {
+        Some(selector) if selector.ends_with('M') => Err(parse_error(
+            line,
+            format!("`{token}` marks a nested multiplexor; extended multiplexing is not supported"),
+        )),
         Some(selector) => Ok(Multiplexing::Multiplexed(parse_number(
             selector,
             line,
@@ -129,6 +152,52 @@ fn parse_multiplexing(token: &str, line: usize) -> Result<Multiplexing> {
             format!("unexpected token `{token}` after signal name"),
         )),
     }
+}
+
+/// `<id> <signal> <multiplexor> <from>-<to>[, <from>-<to>]... ;`
+///
+/// CANdb++ writes one of these per multiplexed signal even for simple
+/// multiplexing, so the record is accepted when it merely restates the
+/// signal's `m<N>` token. Anything it would add — a different multiplexor,
+/// a range, several ranges — is extended multiplexing, which I reject rather
+/// than decode against the wrong selector.
+fn check_multiplexer_values(db: &Database, rest: &str, line: usize) -> Result<()> {
+    let mut tokens = rest.trim_end_matches(';').split_whitespace();
+    let id_token = expect_token(&mut tokens, line, "SG_MUL_VAL_ record has no identifier")?;
+    let raw_id: u32 = parse_number(id_token, line, "message identifier")?;
+    let id = CanId::from_dbc(raw_id).map_err(|e| parse_error(line, e.to_string()))?;
+    let signal_name = expect_token(&mut tokens, line, "SG_MUL_VAL_ record has no signal name")?;
+    let multiplexor_name =
+        expect_token(&mut tokens, line, "SG_MUL_VAL_ record has no multiplexor")?;
+    let ranges: String = tokens.collect();
+
+    let message = db.message(id).ok_or_else(|| {
+        parse_error(
+            line,
+            format!("SG_MUL_VAL_ refers to unknown message {raw_id}"),
+        )
+    })?;
+    let signal = message.signal(signal_name).ok_or_else(|| {
+        parse_error(
+            line,
+            format!("SG_MUL_VAL_ refers to unknown signal `{signal_name}`"),
+        )
+    })?;
+
+    let same_multiplexor = message
+        .multiplexor()
+        .is_some_and(|m| m.name == multiplexor_name);
+    let restates_token = match signal.multiplexing {
+        Multiplexing::Multiplexed(n) => ranges == format!("{n}-{n}"),
+        _ => false,
+    };
+    if same_multiplexor && restates_token {
+        return Ok(());
+    }
+    Err(parse_error(
+        line,
+        format!("signal `{signal_name}` uses extended multiplexing, which is not supported"),
+    ))
 }
 
 struct Layout {
@@ -243,6 +312,14 @@ fn parse_quoted(text: &str, line: usize) -> Result<String> {
     Ok(unit.to_string())
 }
 
+fn expect_token<'a>(
+    tokens: &mut impl Iterator<Item = &'a str>,
+    line: usize,
+    missing: &'static str,
+) -> Result<&'a str> {
+    tokens.next().ok_or_else(|| parse_error(line, missing))
+}
+
 fn parse_number<T: FromStr>(token: &str, line: usize, what: &str) -> Result<T> {
     token
         .parse()
@@ -354,6 +431,64 @@ BO_ 256 EngineData: 8 ECU
         assert_eq!(signals[0].multiplexing, Multiplexing::Multiplexor);
         assert_eq!(signals[1].multiplexing, Multiplexing::Multiplexed(0));
         assert_eq!(signals[2].multiplexing, Multiplexing::Multiplexed(12));
+    }
+
+    const MUXED: &str = "BO_ 768 Susp: 8 ECU\n \
+                         SG_ Mux M : 0|8@1+ (1,0) [0|255] \"\" X\n \
+                         SG_ PosFL m0 : 8|16@1- (0.1,0) [0|0] \"mm\" X\n \
+                         SG_ PosFR m12 : 8|16@1- (0.1,0) [0|0] \"mm\" X\n";
+
+    fn message_of(result: Result<Database>) -> String {
+        match result {
+            Err(Error::DbcParse { message, .. }) => message,
+            other => panic!("expected a parse error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_a_second_multiplexor_in_one_message() {
+        let text = format!("{MUXED} SG_ Mux2 M : 24|8@1+ (1,0) [0|0] \"\" X\n");
+        assert_eq!(line_of(parse(&text)), 5);
+        assert!(message_of(parse(&text)).contains("extended multiplexing"));
+    }
+
+    #[test]
+    fn rejects_a_nested_multiplexor_token() {
+        let text = format!("{MUXED} SG_ Sub m1M : 24|8@1+ (1,0) [0|0] \"\" X\n");
+        assert_eq!(line_of(parse(&text)), 5);
+        assert!(message_of(parse(&text)).contains("extended multiplexing"));
+    }
+
+    #[test]
+    fn accepts_multiplexer_value_records_that_restate_the_selector() {
+        let text =
+            format!("{MUXED}\nSG_MUL_VAL_ 768 PosFL Mux 0-0;\nSG_MUL_VAL_ 768 PosFR Mux 12-12 ;\n");
+        let db = parse(&text).unwrap();
+        assert_eq!(db.signal_count(), 3);
+    }
+
+    #[test]
+    fn rejects_multiplexer_value_records_that_add_a_range() {
+        let text = format!("{MUXED}\nSG_MUL_VAL_ 768 PosFL Mux 0-3;\n");
+        assert_eq!(line_of(parse(&text)), 6);
+        assert!(message_of(parse(&text)).contains("PosFL"));
+
+        let text = format!("{MUXED}\nSG_MUL_VAL_ 768 PosFR Mux 12-12, 14-14;\n");
+        assert_eq!(line_of(parse(&text)), 6);
+    }
+
+    #[test]
+    fn rejects_multiplexer_value_records_naming_another_multiplexor() {
+        let text = format!("{MUXED}\nSG_MUL_VAL_ 768 PosFL PosFR 0-0;\n");
+        assert_eq!(line_of(parse(&text)), 6);
+    }
+
+    #[test]
+    fn rejects_multiplexer_value_records_with_dangling_references() {
+        let text = format!("{MUXED}\nSG_MUL_VAL_ 769 PosFL Mux 0-0;\n");
+        assert!(message_of(parse(&text)).contains("unknown message"));
+        let text = format!("{MUXED}\nSG_MUL_VAL_ 768 Nope Mux 0-0;\n");
+        assert!(message_of(parse(&text)).contains("unknown signal"));
     }
 
     #[test]

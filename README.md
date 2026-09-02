@@ -113,8 +113,9 @@ and CI runs that test.
 | 64-byte (CAN FD) payloads | Done — every layout up to 64 bytes in `tests/properties.rs` and `tests/differential.rs` |
 | Property tests | Done — `tests/properties.rs`, 10 properties, 2,048 cases each locally and 16,384 in CI |
 | Differential test vs. `cantools` | Done — `tests/differential.rs`, ≥100,000 generated cases enforced, 500,000 in CI |
-| Multiplexed signals | Parsed, not yet filtered by multiplexor value |
-| Multiplexor filtering, value tables, CAN FD frame I/O | Planned |
+| Multiplexed signals (simple multiplexing) | Done — `the_multiplexor_value_selects_which_page_decodes`, `vector_g`, multiplexed messages in `tests/differential.rs` |
+| Extended multiplexing (`m<N>M`, `SG_MUL_VAL_` ranges) | Rejected at parse time with a clear error, rather than decoded wrongly |
+| Value tables, CAN FD frame I/O | Planned |
 | SocketCAN live capture, `candump` replay | Planned |
 | Benchmarks | Planned |
 | MoTeC `.ld` export | Stretch goal |

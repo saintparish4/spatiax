@@ -33,15 +33,17 @@ pub enum ValueType {
 
 /// A signal's role in a multiplexed message.
 ///
-/// Parsed and stored so real files load. Not yet used to filter which
-/// signals apply to a given frame.
+/// Simple multiplexing only: one `M` per message and each `m<N>` signal
+/// present for exactly one raw value of it. The parser rejects extended
+/// multiplexing (`m<N>M`, `SG_MUL_VAL_` ranges) rather than load a file it
+/// would then decode wrongly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Multiplexing {
     /// Always present.
     None,
-    /// DBC `M` — this signal's value selects which multiplexed signals apply.
+    /// DBC `M` — this signal's raw value selects which multiplexed signals apply.
     Multiplexor,
-    /// DBC `m<N>` — present only when the multiplexor equals `N`.
+    /// DBC `m<N>` — present only when the multiplexor's raw value equals `N`.
     Multiplexed(u16),
 }
 
@@ -130,6 +132,20 @@ pub struct Message {
     pub sender: String,
     /// Signals, in the order the DBC listed them.
     pub signals: Vec<Signal>,
+}
+
+impl Message {
+    /// The signal named `name`, if the message carries one.
+    pub fn signal(&self, name: &str) -> Option<&Signal> {
+        self.signals.iter().find(|s| s.name == name)
+    }
+
+    /// The signal whose raw value selects which multiplexed signals apply.
+    pub fn multiplexor(&self) -> Option<&Signal> {
+        self.signals
+            .iter()
+            .find(|s| s.multiplexing == Multiplexing::Multiplexor)
+    }
 }
 
 /// A parsed DBC database, indexed by identifier for O(1) frame lookup.

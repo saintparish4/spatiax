@@ -130,12 +130,27 @@ fn extended_identifier_message_is_reachable_by_its_masked_id() {
 }
 
 #[test]
-fn multiplexed_signals_are_parsed_even_though_they_are_not_yet_filtered() {
+fn vector_g_multiplexor_selects_the_page_that_decodes() {
+    // DamperMux: 0|8@1+. DamperPosFL is m0, DamperPosFR is m1, both 8|16@1-.
+    // Byte 0 = 0x01 selects page 1; bytes 1..2 = 0x10 0x00 -> raw 0x0010 = 16, * 0.1 = 1.6
     let db = fixture();
     let signals = &db.message(CanId::Standard(768)).unwrap().signals;
     assert_eq!(signals[0].multiplexing, Multiplexing::Multiplexor);
     assert_eq!(signals[1].multiplexing, Multiplexing::Multiplexed(0));
     assert_eq!(signals[2].multiplexing, Multiplexing::Multiplexed(1));
+
+    let payload = [0x01, 0x10, 0x00, 0, 0, 0, 0, 0];
+    let frame = CanFrame::new(CanId::Standard(768), &payload, 0).unwrap();
+    let names: Vec<_> = db
+        .decode_frame(&frame)
+        .unwrap()
+        .map(|d| d.unwrap().signal.name.clone())
+        .collect();
+    assert_eq!(names, ["DamperMux", "DamperPosFR"]);
+
+    let (raw, value) = decode_one(&db, CanId::Standard(768), &payload, "DamperPosFR");
+    assert_eq!(raw, 0x0010);
+    assert_close(value, 1.6);
 }
 
 #[test]
