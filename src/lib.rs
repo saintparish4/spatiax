@@ -6,8 +6,9 @@
 //! differentially tested against `cantools`, while parsing, capture, and
 //! export live outside it.
 //!
-//! Today the crate provides the frame, identifier, and error types. The DBC
-//! parser and the decoder are not here yet.
+//! Today the crate provides the frame, identifier, and error types, the DBC
+//! signal definitions, and bit extraction for both byte orders. The DBC text
+//! parser is not here yet.
 //!
 //! # Example
 //!
@@ -27,8 +28,11 @@
 #![deny(rust_2018_idioms)]
 #![warn(clippy::all)]
 
+pub mod dbc;
+pub mod decode;
 pub mod error;
 pub mod frame;
 
+pub use dbc::{Database, Signal};
 pub use error::{Error, Result};
 pub use frame::{CanFrame, CanId, MAX_FRAME_LEN};
