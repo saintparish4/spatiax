@@ -1,4 +1,4 @@
-//! `canline` — a CAN bus / DBC decoder for motorsport telemetry.
+//! `spatiax` — a CAN bus / DBC decoder for motorsport telemetry.
 //!
 //! The organising claim is not "this decodes CAN" but "this decodes CAN
 //! correctly, and here is the evidence". That shapes the layout: bit
@@ -12,7 +12,7 @@
 //! # Example
 //!
 //! ```
-//! use canline::{CanFrame, CanId};
+//! use spatiax::{CanFrame, CanId};
 //!
 //! // DBC writes extended identifiers with bit 31 set.
 //! let id = CanId::from_dbc(0x98FE_EE00)?;
@@ -20,7 +20,7 @@
 //!
 //! let frame = CanFrame::new(id, &[0x01, 0x02], 0)?;
 //! assert_eq!(frame.data(), &[0x01, 0x02]);
-//! # Ok::<(), canline::Error>(())
+//! # Ok::<(), spatiax::Error>(())
 //! ```
 
 #![deny(missing_docs)]

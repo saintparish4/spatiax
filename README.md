@@ -1,4 +1,4 @@
-# canline
+# SpatiaX
 
 A CAN bus / DBC decoder for motorsport telemetry, written in Rust.
 
@@ -65,7 +65,7 @@ Three layers, in increasing order of what they catch:
    especially signals straddling byte boundaries, which is where hand-written
    vectors run out of imagination.
 3. **Differential testing against `cantools`.** Generate a random but valid
-   DBC and random frames, decode with both `canline` and the Python
+   DBC and random frames, decode with both `spatiax` and the Python
    reference, and assert agreement. This is the layer that turns "I believe
    this is correct" into "here is the harness, run it yourself."
 

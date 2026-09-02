@@ -1,7 +1,7 @@
 //! Exercises the crate the way a downstream user would: only through the
 //! re-exports at the crate root.
 
-use canline::{CanFrame, CanId, Error, MAX_FRAME_LEN, Result};
+use spatiax::{CanFrame, CanId, Error, MAX_FRAME_LEN, Result};
 
 #[test]
 fn extended_dbc_id_round_trips_through_a_frame() -> Result<()> {

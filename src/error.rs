@@ -86,7 +86,7 @@ mod tests {
     #[test]
     fn io_errors_convert_with_the_question_mark_operator() {
         fn read_missing() -> Result<String> {
-            Ok(std::fs::read_to_string("/nonexistent/canline/test")?)
+            Ok(std::fs::read_to_string("/nonexistent/spatiax/test")?)
         }
         assert!(matches!(read_missing(), Err(Error::Io(_))));
     }
