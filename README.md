@@ -80,8 +80,8 @@ and CI runs that test.
 
 | Capability | State |
 |---|---|
-| CAN frame and identifier types | Not yet landed |
-| DBC extended-identifier handling | Not yet landed |
+| CAN frame and identifier types | Done — `frame::tests`, `tests/public_api.rs` |
+| DBC extended-identifier handling | Done — `dbc_id_with_bit31_set_is_extended_and_strips_the_flag` |
 | DBC parser (`BO_` / `SG_` records) | Not yet landed |
 | Bit extraction, Intel byte order | Not yet landed |
 | Bit extraction, Motorola byte order | Not yet landed |
@@ -166,17 +166,14 @@ worth more than six subsystems that merely look impressive in a file tree.
 
 ## Building
 
-**The tree does not currently build.** The salvage step on the roadmap is
-what restores that, and until it lands this section describes the intended
-state rather than the present one.
-
 ```bash
 cargo test
 ```
 
-Once it is in: no system libraries, no ML runtimes, no Docker, and one
-dependency. Live CAN capture (Linux, `socketcan`) arrives later behind a
-feature flag, so the default build stays portable on macOS and Windows.
+No system libraries, no ML runtimes, no Docker, and one dependency
+(`thiserror`). Requires Rust 1.85 or later. Live CAN capture (Linux,
+`socketcan`) arrives later behind a feature flag, so the default build stays
+portable on macOS and Windows.
 
 ## Licence
 

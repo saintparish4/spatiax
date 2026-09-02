@@ -1,34 +1,22 @@
-[workspace]
-members = [
-    "telemetry-core",
-    "telemetry-ingestion", 
-    "telemetry-analysis",
-    "telemetry-ml",
-    "telemetry-alerts",
-    "telemetry-dashboard",
-    "telemetry-can",
-    "telemetry-protocols"
-]
+[package]
+name = "canline"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+description = "A fast, provably correct CAN bus / DBC decoder for motorsport telemetry"
+repository = "https://github.com/saintparish4/spatial"
+keywords = ["can", "dbc", "canbus", "telemetry", "motorsport"]
+categories = ["parser-implementations", "embedded"]
+readme = "README.md"
 
-[workspace.dependencies]
-tokio = { version = "1.0", features = ["full"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-anyhow = "1.0"
-thiserror = "1.0"
-tracing = "0.1"
-tracing-subscriber = "0.3"
-crossbeam = "0.8"
-rayon = "1.7"
-ndarray = "0.15"
-candle = "0.3"
-tch = "0.13"
-plotters = "0.3"
-axum = "0.7"
-tower = "0.4"
-tower-http = "0.5"
-dashmap = "5.5"
-parking_lot = "0.12"
-byteorder = "1.4"
-crc = "3.0"
-ringbuf = "0.3"
+[dependencies]
+thiserror = "2"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+# I keep symbols in bench builds so a profiler can attribute samples to functions.
+[profile.bench]
+debug = true
