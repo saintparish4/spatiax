@@ -17,7 +17,7 @@ const EXPECTED_TEXT: &str = "\
   OilPressure: 0 bar
 1700000000.000250 200 WheelSpeeds
   WheelSpeedFL: 46.6 km/h
-  WheelSpeedFR: 652.8000000000001 km/h
+  WheelSpeedFR: 652.8 km/h
 1700000000.000500 300 SuspensionData
   DamperMux: Front right (1)
   DamperPosFR: 1.6 mm

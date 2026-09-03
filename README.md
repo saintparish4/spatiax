@@ -95,6 +95,11 @@ replay of the same session agree. The text form looks like this:
   ResponseCode: Overheat (1)
 ```
 
+Values are printed at the precision their signal's factor and offset
+imply — a signal scaled by 0.01 prints `652.8`, not the `652.8000000000001`
+that binary floating point would otherwise show — in both the text and
+CSV forms.
+
 `check` reports the two layout problems `cantools` refuses to load in strict
 mode — a signal that runs past its message's DLC, and two signals that can
 decode together but share a bit — since the parser here is lenient and

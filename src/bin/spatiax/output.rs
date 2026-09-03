@@ -73,9 +73,10 @@ impl<W: Write> Writer<W> {
         } else {
             format!(" {}", signal.unit)
         };
+        let value = value(d);
         match d.label() {
-            Some(label) => writeln!(self.out, "  {}: {label} ({}{unit})", signal.name, d.value),
-            None => writeln!(self.out, "  {}: {}{unit}", signal.name, d.value),
+            Some(label) => writeln!(self.out, "  {}: {label} ({value}{unit})", signal.name),
+            None => writeln!(self.out, "  {}: {value}{unit}", signal.name),
         }
     }
 
@@ -93,7 +94,7 @@ impl<W: Write> Writer<W> {
             csv_field(&message.name),
             csv_field(&d.signal.name),
             d.raw,
-            d.value,
+            value(d),
             csv_field(&d.signal.unit),
             csv_field(d.label().unwrap_or_default()),
         )
@@ -113,6 +114,29 @@ fn id(id: CanId) -> String {
         CanId::Standard(raw) => format!("{raw:03X}"),
         CanId::Extended(raw) => format!("{raw:08X}"),
     }
+}
+
+/// The physical value at the precision its signal can express.
+///
+/// `raw * factor + offset` has no more decimals than `factor` and `offset`
+/// do, so rounding to that many hides the binary float noise (`652.8` rather
+/// than `652.8000000000001`) without ever rounding away real information.
+fn value(d: &Decoded<'_>) -> String {
+    let precision = decimals(d.signal.factor).max(decimals(d.signal.offset));
+    let fixed = format!("{:.precision$}", d.value);
+    let trimmed = match fixed.find('.') {
+        Some(_) => fixed.trim_end_matches('0').trim_end_matches('.'),
+        None => fixed.as_str(),
+    };
+    match trimmed {
+        "-0" => "0".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn decimals(x: f64) -> usize {
+    let text = format!("{x}");
+    text.find('.').map_or(0, |dot| text.len() - dot - 1)
 }
 
 /// Quote a field only when RFC 4180 says it needs it.
@@ -141,6 +165,32 @@ mod tests {
         assert_eq!(timestamp(&frame), "1700000000.000250");
         let zero = CanFrame::new(CanId::Standard(1), &[], 0).unwrap();
         assert_eq!(timestamp(&zero), "0.000000");
+    }
+
+    #[test]
+    fn values_print_at_the_precision_their_factor_and_offset_imply() {
+        let db = spatiax::dbc::parse(
+            "BO_ 1 M: 8 ECU\n \
+             SG_ Pressure : 0|8@1+ (0.05,0) [0|12.75] \"bar\" X\n \
+             SG_ Speed : 8|16@1+ (0.01,0) [0|655.35] \"km/h\" X\n \
+             SG_ Rpm : 24|16@1+ (0.25,0) [0|16383.75] \"rpm\" X\n \
+             SG_ Temp : 40|8@1+ (1,-40) [-40|215] \"degC\" X\n \
+             SG_ Pos : 48|8@1- (0.1,0) [-12.8|12.7] \"mm\" X\n \
+             SG_ Flip : 56|8@1+ (-0.5,0) [-127.5|0] \"\" X\n",
+        )
+        .unwrap();
+        let frame = CanFrame::new(
+            CanId::Standard(1),
+            &[111, 0x00, 0xFF, 0x34, 0x12, 0, 0xFF, 0],
+            0,
+        )
+        .unwrap();
+        let printed: Vec<String> = db
+            .decode_frame(&frame)
+            .unwrap()
+            .map(|d| value(&d.unwrap()))
+            .collect();
+        assert_eq!(printed, ["5.55", "652.8", "1165", "-40", "-0.1", "0"]);
     }
 
     #[test]
