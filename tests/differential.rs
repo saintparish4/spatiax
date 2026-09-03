@@ -64,8 +64,9 @@ struct Generated {
     text: String,
     /// Per message, in DBC order: its name, identifier, and frame payloads.
     frames: Vec<(String, CanId, Vec<Vec<u8>>)>,
-    /// Signal values the frames are expected to produce; the loop that
-    /// decides how many databases to generate works from this estimate.
+    /// Cases the frames will produce, counted the way the comparison counts
+    /// them. The loop that decides how many databases to generate works from
+    /// this, so an over-count would stop it short of the criterion.
     cases: usize,
 }
 
@@ -96,6 +97,14 @@ fn spatiax_agrees_with_cantools_on_generated_databases() {
     }
 
     report(&mismatches, seed, &dir, cases, labels);
+    // The generator stops once its estimate reaches the target, so an
+    // estimate that counts differently from the comparison would let a run
+    // claim a case count it never compared.
+    let estimated: usize = databases.iter().map(|g| g.cases).sum();
+    assert_eq!(
+        estimated, cases,
+        "the generator estimated {estimated} cases and the comparison counted {cases}"
+    );
     std::fs::remove_dir_all(&dir).expect("clean up generated files");
 }
 
@@ -466,7 +475,7 @@ fn generate_database(rng: &mut StdRng) -> Generated {
         tables.push_str(&render_value_tables(&message));
         cases += payloads
             .iter()
-            .map(|p| message.decode(p).count())
+            .map(|p| comparable_cases(&message, p))
             .sum::<usize>();
         frames.push((message.name, id, payloads));
     }
@@ -477,6 +486,37 @@ fn generate_database(rng: &mut StdRng) -> Generated {
         frames,
         cases,
     }
+}
+
+/// How many cases the comparison will count for one frame.
+///
+/// One per decoded signal, with one exception: `cantools` refuses a frame
+/// whose multiplexor selects an undefined page, so there is nothing to
+/// compare signal by signal and the comparison counts the frame once.
+/// Counting those per signal here let the generator reach its target with
+/// fewer real cases than it had promised, and the criterion then failed.
+fn comparable_cases(message: &Message, payload: &[u8]) -> usize {
+    if selects_no_page(message, payload) {
+        return 1;
+    }
+    message.decode(payload).count()
+}
+
+/// Whether this payload is the kind of frame `cantools` refuses outright.
+fn selects_no_page(message: &Message, payload: &[u8]) -> bool {
+    message.multiplexor().is_some()
+        && !message
+            .decode(payload)
+            .flatten()
+            .any(|d| match d.signal.multiplexing {
+                Multiplexing::Multiplexed(_) => true,
+                // A key of the multiplexor's own value table is a page to
+                // `cantools`, empty unless an `m<N>` signal also names it,
+                // and a frame selecting one decodes rather than being
+                // refused.
+                Multiplexing::Multiplexor => d.label().is_some(),
+                Multiplexing::None => false,
+            })
 }
 
 fn random_id(rng: &mut StdRng) -> CanId {
