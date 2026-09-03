@@ -27,3 +27,7 @@ perf.data*
 
 # Local Python environment for the cantools differential oracle
 /.venv/
+
+# What the README's demo commands leave behind when run from the checkout
+/lap.csv
+/lap.png

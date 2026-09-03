@@ -15,9 +15,52 @@ decode against the reference implementation the industry already trusts.
 > `cantools` that CI runs on every push. The first measured numbers are in
 > [Performance](#performance), with the machine that produced them. Nothing
 > below is claimed as working unless the status table says so. See
-> [Current state](#current-state).
+> [Current state](#current-state), or [see it on a lap](#see-it-on-a-lap)
+> first.
 
 ---
+
+## See it on a lap
+
+One lap of a GT3-style car — 23,102 CAN frames in a `candump` log — decoded
+in under a tenth of a second on a laptop, then plotted:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/demo/lap-dark.png">
+  <img alt="Seven traces stacked over one 82.5 second lap: speed, engine RPM, gear, throttle, front brake pressure, steering angle, and lateral g" src="docs/demo/lap.png">
+</picture>
+
+This is the terminal session behind it — the database is checked, the log
+is decoded to the screen, then to CSV, then the CSV is plotted:
+
+![Terminal recording of spatiax check, spatiax decode, and the plot script on the demo lap](docs/demo/decode.gif)
+
+To do the same on your machine:
+
+```bash
+cargo install --path .
+pip install matplotlib
+
+spatiax check fixtures/demo/gt3.dbc
+spatiax decode --format csv fixtures/demo/gt3.dbc fixtures/demo/synthetic_lap.log > lap.csv
+python3 scripts/plot_lap.py lap.csv -o lap.png
+```
+
+The same three commands work on your own DBC and `candump` log. The CSV has
+one row per decoded signal — timestamp, message, signal, raw and physical
+value, unit, label — so it opens in Excel and imports into MoTeC i2 or
+ATLAS like any other CSV. `plot_lap.py` plots whichever channels you name
+(`--channels Speed,LatAccel`), one panel each on a shared lap-time axis.
+
+**The lap is synthetic.** No real car's data is in this repository.
+`scripts/synthetic_lap.py` drives a simple car model round a fictional
+3.6 km circuit, encodes what its sensors would report with the reference
+implementation (`cantools`), and writes the frames the way `candump` would
+have logged them; `fixtures/demo/gt3.dbc` is the database it encodes
+against. That makes the demo a round trip through the other decoder, and
+CI regenerates the log on every push to confirm it still matches. If you
+have a real log you can share, the commands above and the plot script apply
+unchanged — the channel names are just arguments.
 
 ## Why this exists
 
@@ -179,6 +222,7 @@ and CI runs that test.
 | `spatiax` binary (`decode`, `check`) | Done — `tests/cli.rs` runs the built binary end to end |
 | SocketCAN live capture (`live::Capture`, `spatiax live`) | Done — `live::tests`, `tests/live.rs` sends frames over `vcan0` in CI and reads them back through both |
 | Benchmarks | Done — `benches/decode.rs`; the `benchmarks` job in CI runs them on every push and prints the table in its summary |
+| Demo lap (`fixtures/demo`, synthetic) | Done — `tests/demo_lap.rs` decodes every frame and checks the channels still read like a lap; CI regenerates the log with `scripts/synthetic_lap.py --check` |
 | MoTeC `.ld` export | Stretch goal |
 
 ## Performance
@@ -315,6 +359,16 @@ and skips with a message when it cannot find one — see
 ```bash
 cargo bench                        # the benchmarks in benches/decode.rs
 python3 scripts/bench_table.py     # their results as the table above
+```
+
+The demo lap has its own scripts. Regenerating the log needs `cantools`,
+the plot needs `matplotlib`, and the recording needs `asciinema` and `agg`:
+
+```bash
+python3 scripts/synthetic_lap.py           # rewrite fixtures/demo/synthetic_lap.log
+python3 scripts/synthetic_lap.py --check   # or confirm the committed log still matches
+python3 scripts/plot_lap.py lap.csv        # docs/demo/lap.png, --theme dark for the other
+scripts/record_demo.sh                     # docs/demo/decode.gif
 ```
 
 Live capture is behind the `socketcan` feature and only does anything on

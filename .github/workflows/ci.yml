@@ -90,6 +90,9 @@ jobs:
           SPATIAX_REQUIRE_ORACLE: "1"
           SPATIAX_DIFFERENTIAL_CASES: "500000"
 
+      - name: Regenerate the demo lap and compare it with the committed log
+        run: python3 scripts/synthetic_lap.py --check
+
   bench:
     name: benchmarks
     runs-on: ubuntu-latest
