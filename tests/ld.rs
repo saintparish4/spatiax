@@ -1,6 +1,8 @@
 //! `.ld` export end to end: the demo lap resampled, a golden file that
-//! fails if the layout moves, and a file read back by an implementation
-//! nobody here wrote.
+//! fails if the layout moves, a file read back by an implementation nobody
+//! here wrote, and the same file laid out again by that implementation's
+//! writer. The last two are complementary — reading checks every field a
+//! reader looks at, rewriting checks the ones it skips.
 //!
 //! The oracle test skips when `ldparser` cannot be imported, the way the
 //! `cantools` differential test skips. `SPATIAX_REQUIRE_LDPARSER=1` turns a
@@ -192,6 +194,54 @@ fn an_independent_reader_agrees_with_every_value_in_the_file() {
     assert_eq!(described, session.channels().len());
     assert_eq!(compared, described * session.sample_count());
     eprintln!("{compared} samples across {described} channels read back identically");
+}
+
+#[test]
+fn the_reference_writer_lays_the_same_session_out_the_same_way() {
+    let Some(python) = ldparser_python() else {
+        return;
+    };
+
+    // Reading the file back proves every field a reader looks at. This
+    // proves the ones it skips: pull the golden file through the reference
+    // implementation's own writer and compare. Everything the reader
+    // understood is carried across unchanged, so a byte that differs
+    // afterwards is one the two writers disagree about — a magic number, the
+    // per-channel counter, a calibration field, or padding.
+    let rebuilt = std::env::temp_dir().join("spatiax_ld_rebuilt.ld");
+    let output = Command::new(&python)
+        .arg(manifest_dir().join("tests/oracle/ldparser_writer.py"))
+        .arg(manifest_dir().join(GOLDEN))
+        .arg(&rebuilt)
+        .env("PYTHONPATH", ldparser_path())
+        .output()
+        .expect("launch the oracle interpreter");
+    assert!(
+        output.status.success(),
+        "the reference writer failed with {}:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let ours = std::fs::read(manifest_dir().join(GOLDEN)).expect("the golden file is committed");
+    let theirs = std::fs::read(&rebuilt).expect("the reference writer wrote a file");
+    assert_eq!(
+        ours.len(),
+        theirs.len(),
+        "we wrote {} bytes, the reference writer wrote {}",
+        ours.len(),
+        theirs.len()
+    );
+    if let Some(at) = ours.iter().zip(&theirs).position(|(a, b)| a != b) {
+        panic!(
+            "byte {at} differs from the reference writer: ours {:#04x}, theirs {:#04x}",
+            ours[at], theirs[at]
+        );
+    }
+    eprintln!(
+        "{} bytes identical to the reference writer's output",
+        ours.len()
+    );
 }
 
 /// Where `ldparser.py` was fetched to, which the oracle needs on its path.

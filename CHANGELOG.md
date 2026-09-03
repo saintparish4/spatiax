@@ -16,9 +16,11 @@ numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `--driver`, `--vehicle`, `--venue` and `--event` supply the session
   metadata i2 shows.
 - A second oracle, `ldparser`, pinned by commit and checksum and fetched by
-  `scripts/fetch_ld_oracle.sh`. CI reads back every value of an exported lap
-  with it, and `fixtures/gt3_sample.ld` is a byte-level golden file. No file
-  produced by this crate has been opened in MoTeC i2 yet.
+  `scripts/fetch_ld_oracle.sh`. CI checks the exporter against it twice: it
+  reads back every value of an exported lap, and its own writer reproduces
+  `fixtures/gt3_sample.ld` byte for byte, which covers the fields a reader
+  discards. `fixtures/gt3_sample.ld` is also a byte-level golden file. No
+  file produced by this crate has been opened in MoTeC i2 yet.
 - `Error::Export`, for a session that cannot be built from the log and
   database given.
 

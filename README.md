@@ -12,7 +12,8 @@ decode against the reference implementation the industry already trusts.
 > SocketCAN capture, MoTeC `.ld` export, and the `spatiax` command-line
 > tool exist and are backed by the three layers of evidence below —
 > hand-computed vectors, property tests over every layout, and a
-> differential test against `cantools` that CI runs on every push. The first measured numbers are in
+> differential test against `cantools` that CI runs on every push. The
+> first measured numbers are in
 > [Performance](#performance), with the machine that produced them. Nothing
 > below is claimed as working unless the status table says so. See
 > [Current state](#current-state), or [see it on a lap](#see-it-on-a-lap)
@@ -265,7 +266,7 @@ and CI runs that test.
 | Read timeout on a live capture | Done — `a_capture_with_a_read_timeout_stops_waiting_once_the_bus_goes_quiet`, `the_live_command_exits_cleanly_once_the_bus_has_been_quiet_for_the_timeout` |
 | Benchmarks | Done — `benches/decode.rs`; the `benchmarks` job in CI runs them on every push and prints the table in its summary |
 | Demo lap (`fixtures/demo`, synthetic) | Done — `tests/demo_lap.rs` decodes every frame and checks the channels still read like a lap; CI regenerates the log with `scripts/synthetic_lap.py --check` |
-| MoTeC `.ld` export (`ld`, `spatiax export`) | Done — `tests/ld.rs`; `ldparser` reads back all 70,993 values of the exported demo lap in the `ld export vs ldparser` CI job, and `fixtures/gt3_sample.ld` is a byte-level golden file |
+| MoTeC `.ld` export (`ld`, `spatiax export`) | Done — `tests/ld.rs`; in the `ld export vs ldparser` CI job `ldparser` reads back all 70,993 values of the exported demo lap, and its own writer reproduces `fixtures/gt3_sample.ld` byte for byte |
 | The exported file opened in MoTeC i2 | **Not yet confirmed** — no file from this crate has been opened in i2 |
 
 ## Performance
@@ -354,15 +355,27 @@ binary and undocumented by MoTeC; what exists is a community
 reverse-engineering effort, and the layout here was rebuilt from it and then
 checked field by field.
 
-**How far the evidence goes, precisely.** Every value in an exported file is
-read back by [`ldparser`](https://github.com/gotzl/ldparser) — an
-independently reverse-engineered reader, pinned by commit and checksum,
-never vendored into this MIT tree because it is GPL-3.0 — and compared bit
-for bit against what this crate meant to write. That runs in CI on every
-push, alongside a byte-level golden file. What has *not* happened is the
-round trip that matters most: no file this crate produced has been opened in
-i2. Until it has, this section claims agreement with another reader and
-nothing about MoTeC's own software.
+**How far the evidence goes, precisely.** Two checks against
+[`ldparser`](https://github.com/gotzl/ldparser) — an independently
+reverse-engineered implementation, pinned by commit and checksum, never
+vendored into this MIT tree because it is GPL-3.0 — plus a byte-level golden
+file, all three in CI on every push:
+
+- **Read back.** Every value of an exported lap — 70,993 of them across 43
+  channels — is decoded by `ldparser` and compared bit for bit with what
+  this crate meant to write. That covers every field a reader looks at.
+- **Written again.** The golden file is pulled through `ldparser`'s own
+  writer and the result compared byte for byte with ours. All 4,276 bytes
+  match. This is the check that covers what the first one cannot: the device
+  identity, the logging magic, the per-channel counter, the calibration
+  fields and the padding — everything a reader discards and therefore cannot
+  vouch for.
+
+What has *not* happened is the round trip that matters most: no file this
+crate produced has been opened in i2. Two implementations agreeing on a
+reverse-engineered format is not the same as MoTeC's own software accepting
+it, and until someone opens one, this section claims the former and nothing
+about the latter.
 
 What the exporter does today: one sample rate for every channel, chosen from
 the log unless `--rate` says otherwise; sample-and-hold between updates,
