@@ -41,6 +41,14 @@ allocation, and no knowledge of DBC text — just the arithmetic that pulls a
 signal out of a payload. Keeping it small is what makes it possible to test
 exhaustively.
 
+**Extraction is one load, one shift, one mask.** Any signal that fits in
+eight bytes sits inside some 8-byte window of the payload, so the decoder
+loads that window as a `u64` — little-endian for Intel, big-endian for
+Motorola — and shifts the signal down. The bit-by-bit walk survives for the
+one shape a single word cannot hold (58 bits or more from an unaligned
+start, spanning nine bytes) and as the independent formulation the fast
+path is checked against for every layout on every payload length.
+
 **Frames don't allocate.** CAN FD bounds a payload at 64 bytes, so a frame
 is a fixed `[u8; 64]` plus a length rather than a `Vec`. `CanFrame` is
 `Copy`, and the decode path performs no heap allocation.

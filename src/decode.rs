@@ -11,6 +11,13 @@
 //! at bit 7 of the *next* byte, which is a `+15` jump in absolute position.
 //!
 //! Relies on the parser's invariant that `1 <= signal.length <= 64`.
+//!
+//! Extraction is one 8-byte load, a shift, and a mask. Any signal that fits
+//! in eight bytes sits inside some 8-byte window of the payload, so I load
+//! that window as a `u64` and let the byte order pick little- or big-endian
+//! interpretation. The bit-by-bit walk is kept for the one shape that does
+//! not fit — 58 bits or more from an unaligned start, spanning nine bytes —
+//! and as the independent formulation the fast path is tested against.
 
 use crate::dbc::types::{ByteOrder, Signal};
 use crate::error::{Error, Result};
@@ -89,11 +96,59 @@ pub(crate) fn bit_positions(signal: &Signal) -> impl Iterator<Item = usize> {
     .take(usize::from(signal.length))
 }
 
+/// The low `length` bits set. Valid for `1..=64`.
+fn mask(length: usize) -> u64 {
+    u64::MAX >> (64 - length)
+}
+
+/// Eight payload bytes that include byte `first`, and where `first` lands
+/// in them.
+///
+/// For a payload of eight bytes or more this is a plain unaligned load,
+/// slid back from the end when `first` is near it so the window stays in
+/// bounds. A shorter payload is zero-padded instead. Either way the caller
+/// has already checked that the signal's bytes are all present.
+fn window(data: &[u8], first: usize) -> ([u8; 8], usize) {
+    let mut bytes = [0u8; 8];
+    match data.len().checked_sub(8) {
+        Some(last_window) => {
+            let at = first.min(last_window);
+            bytes.copy_from_slice(&data[at..at + 8]);
+            (bytes, first - at)
+        }
+        None => {
+            bytes[..data.len()].copy_from_slice(data);
+            (bytes, first)
+        }
+    }
+}
+
+fn extract_intel(data: &[u8], start: usize, length: usize) -> u64 {
+    let (first, bit) = (start / 8, start % 8);
+    if (bit + length).div_ceil(8) > 8 {
+        return extract_intel_bitwise(data, start, length);
+    }
+    let (bytes, offset) = window(data, first);
+    (u64::from_le_bytes(bytes) >> (offset * 8 + bit)) & mask(length)
+}
+
+fn extract_motorola(data: &[u8], start: usize, length: usize) -> u64 {
+    let (first, bit) = (start / 8, start % 8);
+    if (length + 7 - bit).div_ceil(8) > 8 {
+        return extract_motorola_bitwise(data, start, length);
+    }
+    let (bytes, offset) = window(data, first);
+    // Big-endian, byte `offset` of the window holds the MSB at its bit
+    // `bit`; the LSB is `length - 1` positions below that.
+    let msb = 63 - offset * 8 - (7 - bit);
+    (u64::from_be_bytes(bytes) >> (msb + 1 - length)) & mask(length)
+}
+
 fn bit_at(data: &[u8], pos: usize) -> u64 {
     u64::from((data[pos / 8] >> (pos % 8)) & 1)
 }
 
-fn extract_intel(data: &[u8], start: usize, length: usize) -> u64 {
+fn extract_intel_bitwise(data: &[u8], start: usize, length: usize) -> u64 {
     let mut raw = 0u64;
     for i in 0..length {
         raw |= bit_at(data, start + i) << i;
@@ -101,7 +156,7 @@ fn extract_intel(data: &[u8], start: usize, length: usize) -> u64 {
     raw
 }
 
-fn extract_motorola(data: &[u8], start: usize, length: usize) -> u64 {
+fn extract_motorola_bitwise(data: &[u8], start: usize, length: usize) -> u64 {
     let mut raw = 0u64;
     let mut pos = start;
     for _ in 0..length {
@@ -269,6 +324,58 @@ mod tests {
         assert_eq!(
             extract_raw(&data, &sig(7, 64, ByteOrder::Motorola)).unwrap(),
             u64::MAX
+        );
+    }
+
+    /// Every layout that fits, in both orders, on every payload length from
+    /// one byte (padded window) to sixty-four (sliding window), against the
+    /// bit walk. This is the test that lets the word-load path exist.
+    #[test]
+    fn word_load_agrees_with_the_bit_walk_for_every_layout() {
+        let data: Vec<u8> = (0..64u8).map(|i| i.wrapping_mul(0x9D) ^ 0x5A).collect();
+        let mut checked = 0;
+        for len in 1..=64 {
+            let payload = &data[..len];
+            for order in [ByteOrder::Intel, ByteOrder::Motorola] {
+                let mut s = sig(0, 1, order);
+                for start in 0..(len * 8) as u16 {
+                    for length in 1..=64u8 {
+                        s.start_bit = start;
+                        s.length = length;
+                        // Longer signals from this start need more bytes still.
+                        if required_bytes(&s) > len {
+                            break;
+                        }
+                        let (start, length) = (usize::from(start), usize::from(length));
+                        let expected = match order {
+                            ByteOrder::Intel => extract_intel_bitwise(payload, start, length),
+                            ByteOrder::Motorola => extract_motorola_bitwise(payload, start, length),
+                        };
+                        assert_eq!(
+                            extract_raw(payload, &s).unwrap(),
+                            expected,
+                            "{order:?} start {start} length {length} in {len} bytes"
+                        );
+                        checked += 1;
+                    }
+                }
+            }
+        }
+        assert!(checked > 1_000_000, "only {checked} layouts checked");
+    }
+
+    #[test]
+    fn a_signal_at_the_end_of_a_long_payload_slides_the_window_back() {
+        let mut data = [0u8; 64];
+        data[62] = 0xCD;
+        data[63] = 0xAB;
+        assert_eq!(
+            extract_raw(&data, &sig(496, 16, ByteOrder::Intel)).unwrap(),
+            0xABCD
+        );
+        assert_eq!(
+            extract_raw(&data, &sig(503, 16, ByteOrder::Motorola)).unwrap(),
+            0xCDAB
         );
     }
 
