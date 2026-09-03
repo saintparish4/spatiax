@@ -143,6 +143,12 @@ imply — a signal scaled by 0.01 prints `652.8`, not the `652.8000000000001`
 that binary floating point would otherwise show — in both the text and
 CSV forms.
 
+A frame line carries a `[dlc 9]` suffix when the log gave it a data length
+code above the eight bytes it holds. Classic CAN allows the codes 9 to 15 on
+a full frame, `candump` writes one as a `_9` suffix, and an ECU can mean
+something by which it sent, so the code is kept rather than inferred back
+from the payload.
+
 `check` reports the two layout problems `cantools` refuses to load in strict
 mode — a signal that runs past its message's DLC, and two signals that can
 decode together but share a bit — since the parser here is lenient and
@@ -217,6 +223,7 @@ and CI runs that test.
 | Extended multiplexing (`m<N>M`, `SG_MUL_VAL_` ranges) | Rejected at parse time with a clear error, rather than decoded wrongly |
 | Value tables (`VAL_`, `Decoded::label`) | Done — `parses_value_tables_onto_their_signal`, `labels_match_the_sign_interpreted_raw_value`, labels compared in `tests/differential.rs` (≥10,000 enforced) |
 | CAN FD frame I/O | Done — FD frames read from `candump` logs (`reads_a_can_fd_frame_and_drops_its_flags_digit`) and from SocketCAN (`an_fd_frame_with_an_extended_identifier_carries_all_its_bytes`, `tests/live.rs`) |
+| Data length codes | Done — the CAN FD sizes and the classic `len8_dlc` quirk both map (`every_data_length_code_maps_to_the_length_can_fd_gives_it`, `keeps_the_data_length_code_of_a_len8_dlc_frame`, `rejects_a_can_fd_payload_of_a_length_no_code_can_express`) |
 | `candump` log replay (`candump::LogReader`) | Done — `candump::tests`, `tests/candump.rs` replays `fixtures/gt3_sample.log` |
 | DBC layout check (`dbc::check`) | Done — `dbc::check::tests` |
 | `spatiax` binary (`decode`, `check`) | Done — `tests/cli.rs` runs the built binary end to end |

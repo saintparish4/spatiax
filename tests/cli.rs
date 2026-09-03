@@ -215,3 +215,17 @@ fn check_lists_each_problem_and_exits_with_status_1() {
     );
     assert_eq!(output.status.code(), Some(1));
 }
+
+#[test]
+fn decode_shows_a_data_length_code_that_runs_past_the_bytes_carried() {
+    let log = scratch(
+        "len8_dlc.log",
+        "(1.0) can0 100#3412640000000000_9\n\
+         (2.0) can0 100#3412640000000000\n",
+    );
+    let output = spatiax(&["decode", DBC, log.to_str().unwrap()]);
+    let lines: Vec<_> = stdout(&output).lines().map(str::to_string).collect();
+    assert_eq!(lines[0], "1.000000 100 EngineData [dlc 9]");
+    assert_eq!(lines[5], "2.000000 100 EngineData");
+    assert_eq!(output.status.code(), Some(0));
+}

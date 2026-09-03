@@ -10,15 +10,17 @@
 //!
 //! Three-digit identifiers are standard and eight-digit ones extended, as
 //! can-utils writes them. `##` introduces a CAN FD frame whose first hex
-//! digit is its flags. Remote frames (`123#R`), error frames (bit 29 of the
-//! identifier set), and blank lines carry no signals and are skipped. A line
-//! that does not parse is reported with its line number and reading carries
-//! on with the next, so one corrupt record cannot hide the rest of a session.
+//! digit is its flags, and a trailing `_<dlc>` is the data length code of a
+//! classic frame that declares more than the eight bytes it carries. Remote
+//! frames (`123#R`), error frames (bit 29 of the identifier set), and blank
+//! lines carry no signals and are skipped. A line that does not parse is
+//! reported with its line number and reading carries on with the next, so one
+//! corrupt record cannot hide the rest of a session.
 
 use std::io::BufRead;
 
 use crate::error::{Error, Result};
-use crate::frame::{CanFrame, CanId, MAX_FRAME_LEN};
+use crate::frame::{CanFrame, CanId, MAX_FRAME_LEN, dlc_to_len, len_to_dlc};
 
 const ERROR_FRAME_FLAG: u32 = 0x2000_0000;
 
@@ -95,7 +97,8 @@ fn parse_timestamp(text: &str, line: usize) -> Result<u64> {
         .ok_or_else(|| log_error(line, format!("timestamp {text} overflows")))
 }
 
-/// `<id>#<data>`, `<id>#R[<dlc>]`, or `<id>##<flags><data>`.
+/// `<id>#<data>`, `<id>#<data>_<dlc>`, `<id>#R[<dlc>]`, or
+/// `<id>##<flags><data>`.
 fn parse_frame(token: &str, timestamp_us: u64, line: usize) -> Result<Option<CanFrame>> {
     let (id_hex, rest) = token
         .split_once('#')
@@ -104,14 +107,52 @@ fn parse_frame(token: &str, timestamp_us: u64, line: usize) -> Result<Option<Can
         return Ok(None);
     };
 
-    let data_hex = match rest.strip_prefix('#') {
-        Some(fd) => strip_fd_flags(fd, line)?,
-        None if rest.starts_with('R') => return Ok(None),
-        // Classic frames with a DLC above 8 carry it as a `_<dlc>` suffix.
-        None => rest.split_once('_').map_or(rest, |(data, _)| data),
+    match rest.strip_prefix('#') {
+        Some(fd) => fd_frame(id, fd, timestamp_us, line),
+        None if rest.starts_with('R') => Ok(None),
+        None => classic_frame(id, rest, timestamp_us, line),
+    }
+}
+
+/// `<flags><data>`. CAN FD carries only the lengths its data length codes
+/// can express, so any other payload size is a corrupt record — the same
+/// reading can-utils gives one.
+fn fd_frame(id: CanId, text: &str, timestamp_us: u64, line: usize) -> Result<Option<CanFrame>> {
+    let data = parse_hex(strip_fd_flags(text, line)?, line)?;
+    if len_to_dlc(data.len()).is_none() {
+        return Err(log_error(
+            line,
+            format!("no CAN FD frame carries {} byte(s)", data.len()),
+        ));
+    }
+    Ok(Some(CanFrame::new(id, &data, timestamp_us)?))
+}
+
+/// `<data>`, or `<data>_<dlc>` for a classic frame whose data length code
+/// says more than the eight bytes it carries.
+fn classic_frame(
+    id: CanId,
+    text: &str,
+    timestamp_us: u64,
+    line: usize,
+) -> Result<Option<CanFrame>> {
+    let Some((data_hex, dlc_hex)) = text.split_once('_') else {
+        let data = parse_hex(text, line)?;
+        return Ok(Some(CanFrame::new(id, &data, timestamp_us)?));
     };
     let data = parse_hex(data_hex, line)?;
-    Ok(Some(CanFrame::new(id, &data, timestamp_us)?))
+    let dlc = parse_dlc(dlc_hex, line)?;
+    CanFrame::with_dlc(id, &data, timestamp_us, dlc)
+        .map(Some)
+        .map_err(|e| log_error(line, e.to_string()))
+}
+
+/// The single hex digit after `_`.
+fn parse_dlc(hex: &str, line: usize) -> Result<u8> {
+    u8::from_str_radix(hex, 16)
+        .ok()
+        .filter(|dlc| dlc_to_len(*dlc).is_some())
+        .ok_or_else(|| log_error(line, format!("`_{hex}` is not a data length code")))
 }
 
 /// Three hex digits are a standard identifier and more are extended, the
@@ -238,9 +279,36 @@ mod tests {
     }
 
     #[test]
-    fn ignores_the_len8_dlc_suffix() {
+    fn keeps_the_data_length_code_of_a_len8_dlc_frame() {
         let frame = one("(0.0) can0 123#0011223344556677_9\n");
         assert_eq!(frame.len(), 8);
+        assert_eq!(frame.dlc(), Some(9));
+        assert_eq!(one("(0.0) can0 123#0011223344556677_F\n").dlc(), Some(15));
+        // No suffix, so the payload length gives the code.
+        assert_eq!(one("(0.0) can0 123#001122\n").dlc(), Some(3));
+    }
+
+    #[test]
+    fn rejects_a_data_length_code_that_contradicts_its_payload() {
+        let log = "(0.0) can0 123#001122_9\n\
+                   (0.0) can0 123#0011223344556677_G\n\
+                   (0.0) can0 123#0011223344556677_10\n";
+        let all = frames(log);
+        assert_eq!(all.len(), 3);
+        for (index, result) in all.iter().enumerate() {
+            assert_eq!(line_of(result), index + 1);
+        }
+    }
+
+    #[test]
+    fn rejects_a_can_fd_payload_of_a_length_no_code_can_express() {
+        let all = frames("(0.0) can0 123##1001122334455667788\n");
+        assert!(
+            matches!(&all[0], Err(Error::CandumpParse { message, .. }) if message.contains("9 byte")),
+            "{all:?}"
+        );
+        // The lengths CAN FD does carry are read as before.
+        assert_eq!(one("(0.0) can0 123##100112233445566778899AABB\n").len(), 12);
     }
 
     #[test]

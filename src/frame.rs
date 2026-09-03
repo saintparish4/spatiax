@@ -15,9 +15,44 @@ use crate::error::{Error, Result};
 /// Maximum CAN FD payload, in bytes. Classic CAN uses at most 8 of these.
 pub const MAX_FRAME_LEN: usize = 64;
 
+/// The payload length each of the sixteen data length codes stands for.
+const FD_PAYLOAD_LEN: [u8; 16] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 48, 64];
+
+/// The lowest classic CAN code that says more than the eight bytes it carries.
+const FIRST_LEN8_DLC: u8 = 9;
+
 const DBC_EXTENDED_FLAG: u32 = 0x8000_0000;
 const EXTENDED_ID_MASK: u32 = 0x1FFF_FFFF;
 const STANDARD_ID_MAX: u32 = 0x7FF;
+
+/// The payload length a data length code stands for.
+///
+/// The four-bit code is the length itself up to eight bytes. Above that CAN
+/// FD packs its seven remaining sizes — 12, 16, 20, 24, 32, 48 and 64 bytes —
+/// into the codes 9 to 15, which is why a code cannot simply be read as a
+/// byte count. `None` for a value too large to be a code.
+pub const fn dlc_to_len(dlc: u8) -> Option<usize> {
+    if (dlc as usize) < FD_PAYLOAD_LEN.len() {
+        Some(FD_PAYLOAD_LEN[dlc as usize] as usize)
+    } else {
+        None
+    }
+}
+
+/// The data length code for a payload of exactly `len` bytes.
+///
+/// `None` for a length no CAN frame can carry: 9 to 11 bytes, and the other
+/// gaps between the CAN FD sizes.
+pub const fn len_to_dlc(len: usize) -> Option<u8> {
+    let mut dlc = 0;
+    while dlc < FD_PAYLOAD_LEN.len() {
+        if FD_PAYLOAD_LEN[dlc] as usize == len {
+            return Some(dlc as u8);
+        }
+        dlc += 1;
+    }
+    None
+}
 
 /// A CAN identifier, carrying its own width.
 ///
@@ -97,6 +132,9 @@ pub struct CanFrame {
     id: CanId,
     data: [u8; MAX_FRAME_LEN],
     len: u8,
+    /// Set only when a classic frame declares a code above the eight bytes
+    /// it carries; otherwise the payload length gives the code back.
+    len8_dlc: Option<u8>,
     /// Capture time in microseconds since an arbitrary epoch. The decoder
     /// does not read this; it is carried through for downstream consumers.
     pub timestamp_us: u64,
@@ -114,7 +152,30 @@ impl CanFrame {
             id,
             data,
             len: payload.len() as u8,
+            len8_dlc: None,
             timestamp_us,
+        })
+    }
+
+    /// Build a frame that declares a data length code of its own.
+    ///
+    /// Classic CAN allows the codes 9 to 15 on a frame that still carries
+    /// eight bytes, and an ECU can mean something by which one it sends, so
+    /// the code is kept rather than recomputed from the payload. Any other
+    /// code has to be the one the payload length implies: a code that
+    /// disagrees with the bytes beside it is a corrupt record, not a frame.
+    pub fn with_dlc(id: CanId, payload: &[u8], timestamp_us: u64, dlc: u8) -> Result<Self> {
+        let len8 =
+            payload.len() == 8 && (FIRST_LEN8_DLC..FD_PAYLOAD_LEN.len() as u8).contains(&dlc);
+        if !len8 && dlc_to_len(dlc) != Some(payload.len()) {
+            return Err(Error::DlcMismatch {
+                dlc,
+                len: payload.len(),
+            });
+        }
+        Ok(Self {
+            len8_dlc: len8.then_some(dlc),
+            ..Self::new(id, payload, timestamp_us)?
         })
     }
 
@@ -131,6 +192,16 @@ impl CanFrame {
     /// Payload length in bytes.
     pub fn len(&self) -> usize {
         self.len as usize
+    }
+
+    /// The data length code the frame declares.
+    ///
+    /// Usually the code its payload length implies; a classic frame built by
+    /// [`CanFrame::with_dlc`] can declare a higher one. `None` for a payload
+    /// length no CAN frame can carry, which a truncated capture still
+    /// produces.
+    pub fn dlc(&self) -> Option<u8> {
+        self.len8_dlc.or_else(|| len_to_dlc(self.len()))
     }
 
     /// Whether the frame carries no payload.
@@ -190,6 +261,75 @@ mod tests {
             CanFrame::new(CanId::Standard(0x1), &payload, 0),
             Err(Error::FrameTooLong { len: 65 })
         ));
+    }
+
+    #[test]
+    fn every_data_length_code_maps_to_the_length_can_fd_gives_it() {
+        let lengths: Vec<_> = (0..16).map(|dlc| dlc_to_len(dlc).unwrap()).collect();
+        assert_eq!(
+            lengths,
+            [0, 1, 2, 3, 4, 5, 6, 7, 8, 12, 16, 20, 24, 32, 48, 64]
+        );
+        assert_eq!(dlc_to_len(16), None);
+        for dlc in 0..16u8 {
+            assert_eq!(len_to_dlc(dlc_to_len(dlc).unwrap()), Some(dlc));
+        }
+    }
+
+    #[test]
+    fn a_length_no_frame_can_carry_has_no_data_length_code() {
+        for len in [9, 10, 11, 13, 17, 63, 65] {
+            assert_eq!(len_to_dlc(len), None, "{len} bytes");
+        }
+    }
+
+    #[test]
+    fn a_frame_reports_the_code_its_payload_length_implies() {
+        let dlc = |len: usize| {
+            CanFrame::new(CanId::Standard(1), &vec![0; len], 0)
+                .unwrap()
+                .dlc()
+        };
+        assert_eq!(dlc(0), Some(0));
+        assert_eq!(dlc(8), Some(8));
+        assert_eq!(dlc(12), Some(9));
+        assert_eq!(dlc(64), Some(15));
+        // A capture truncated mid-frame; no code describes what is left.
+        assert_eq!(dlc(9), None);
+    }
+
+    #[test]
+    fn a_classic_frame_keeps_a_data_length_code_above_its_eight_bytes() {
+        let frame = CanFrame::with_dlc(CanId::Standard(0x123), &[0xAA; 8], 0, 9).unwrap();
+        assert_eq!(frame.dlc(), Some(9));
+        assert_eq!(frame.len(), 8);
+        assert_eq!(frame.data(), [0xAA; 8]);
+        assert_eq!(
+            CanFrame::with_dlc(CanId::Standard(1), &[0; 8], 0, 15)
+                .unwrap()
+                .dlc(),
+            Some(15)
+        );
+    }
+
+    #[test]
+    fn a_data_length_code_may_restate_the_payload_length_but_not_contradict_it() {
+        let ok = |payload: &[u8], dlc| CanFrame::with_dlc(CanId::Standard(1), payload, 0, dlc);
+        assert!(ok(&[0; 3], 3).is_ok());
+        assert!(ok(&[0; 12], 9).is_ok());
+        assert!(matches!(
+            ok(&[0; 3], 9),
+            Err(Error::DlcMismatch { dlc: 9, len: 3 })
+        ));
+        assert!(matches!(ok(&[0; 12], 10), Err(Error::DlcMismatch { .. })));
+        assert!(matches!(ok(&[0; 8], 16), Err(Error::DlcMismatch { .. })));
+    }
+
+    #[test]
+    fn two_frames_that_differ_only_in_their_data_length_code_are_not_equal() {
+        let plain = CanFrame::new(CanId::Standard(1), &[0; 8], 0).unwrap();
+        let coded = CanFrame::with_dlc(CanId::Standard(1), &[0; 8], 0, 9).unwrap();
+        assert_ne!(plain, coded);
     }
 
     #[test]

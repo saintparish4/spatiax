@@ -45,6 +45,15 @@ pub enum Error {
         len: usize,
     },
 
+    /// A data length code did not describe the payload it arrived with.
+    #[error("data length code {dlc} does not describe a payload of {len} byte(s)")]
+    DlcMismatch {
+        /// The code as given.
+        dlc: u8,
+        /// Bytes the payload actually carried.
+        len: usize,
+    },
+
     /// A signal's bit range extended past the end of the frame it was
     /// decoded against. Sizes are in bytes because that is the unit of the
     /// DBC's DLC field.

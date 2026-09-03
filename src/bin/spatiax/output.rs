@@ -41,10 +41,11 @@ impl<W: Write> Writer<W> {
         match self.format {
             Format::Text => writeln!(
                 self.out,
-                "{} {} {}",
+                "{} {} {}{}",
                 timestamp(frame),
                 id(frame.id()),
-                message.name
+                message.name,
+                declared_dlc(frame),
             ),
             Format::Csv => Ok(()),
         }
@@ -107,6 +108,16 @@ fn timestamp(frame: &CanFrame) -> String {
         frame.timestamp_us / 1_000_000,
         frame.timestamp_us % 1_000_000
     )
+}
+
+/// A classic frame can declare a data length code above the eight bytes it
+/// carries, and then the code is worth the space on screen. Every other code
+/// only restates the payload length, which the signals below it already show.
+fn declared_dlc(frame: &CanFrame) -> String {
+    match frame.dlc() {
+        Some(dlc) if frame.len() == 8 && dlc > 8 => format!(" [dlc {dlc}]"),
+        _ => String::new(),
+    }
 }
 
 fn id(id: CanId) -> String {
@@ -191,6 +202,17 @@ mod tests {
             .map(|d| value(&d.unwrap()))
             .collect();
         assert_eq!(printed, ["5.55", "652.8", "1165", "-40", "-0.1", "0"]);
+    }
+
+    #[test]
+    fn only_a_code_above_the_eight_bytes_carried_is_worth_printing() {
+        let id = CanId::Standard(1);
+        let plain = CanFrame::new(id, &[0; 8], 0).unwrap();
+        assert_eq!(declared_dlc(&plain), "");
+        let fd = CanFrame::new(id, &[0; 12], 0).unwrap();
+        assert_eq!(declared_dlc(&fd), "");
+        let len8 = CanFrame::with_dlc(id, &[0; 8], 0, 12).unwrap();
+        assert_eq!(declared_dlc(&len8), " [dlc 12]");
     }
 
     #[test]
