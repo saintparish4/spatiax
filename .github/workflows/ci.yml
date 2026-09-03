@@ -52,6 +52,10 @@ jobs:
 
       - name: Bring up a virtual CAN interface
         run: |
+          # The runner's Azure kernel ships without the CAN modules; the
+          # extra-modules package for that exact kernel has them.
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq "linux-modules-extra-$(uname -r)"
           sudo modprobe vcan
           sudo ip link add dev vcan0 type vcan
           sudo ip link set vcan0 mtu 72
