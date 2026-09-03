@@ -17,6 +17,8 @@ perf.data*
 *.blf
 *.mf4
 *.ld
+# ...except the golden file the export test compares against byte for byte
+!/fixtures/*.ld
 /logs/
 
 # Editor / OS

@@ -9,10 +9,10 @@ exhaustive property tests, and a differential harness that checks every
 decode against the reference implementation the industry already trusts.
 
 > **Status: early.** The parser, decoder, encoder, `candump` replay, live
-> SocketCAN capture, and the `spatiax` command-line tool exist and are
-> backed by the three layers of evidence below — hand-computed vectors,
-> property tests over every layout, and a differential test against
-> `cantools` that CI runs on every push. The first measured numbers are in
+> SocketCAN capture, MoTeC `.ld` export, and the `spatiax` command-line
+> tool exist and are backed by the three layers of evidence below —
+> hand-computed vectors, property tests over every layout, and a
+> differential test against `cantools` that CI runs on every push. The first measured numbers are in
 > [Performance](#performance), with the machine that produced them. Nothing
 > below is claimed as working unless the status table says so. See
 > [Current state](#current-state), or [see it on a lap](#see-it-on-a-lap)
@@ -118,6 +118,7 @@ spatiax decode car.dbc session.log                # text, grouped by frame
 spatiax decode car.dbc session.log --format csv   # one row per signal
 candump -L can0 | spatiax decode car.dbc -        # from a pipe
 spatiax check car.dbc                             # layout problems
+spatiax export car.dbc session.log -o session.ld  # for MoTeC i2
 
 cargo install --path . --features socketcan       # Linux only
 spatiax live car.dbc can0                         # decode as frames arrive
@@ -157,6 +158,23 @@ from the payload.
 mode — a signal that runs past its message's DLC, and two signals that can
 decode together but share a bit — since the parser here is lenient and
 would otherwise decode such a file quietly.
+
+`export` writes the decoded log as a MoTeC `.ld` file, which i2 opens
+directly:
+
+```console
+$ spatiax export car.dbc session.log --output session.ld
+spatiax: session.ld — 43 channels at 50 Hz, 4126 samples each, from 23102 frames
+```
+
+A `.ld` channel is a fixed-rate array with no per-sample timestamp, so the
+irregular arrival of CAN frames has to be resampled onto one grid. Without
+`--rate` the grid is the first standard rate at or above the fastest message
+in the log, so nothing is sampled below the rate it arrives at. Between
+updates the last value is held rather than interpolated: the trace steps
+where the bus stepped, and no sample is a value some ECU never sent.
+`--driver`, `--vehicle`, `--venue` and `--event` fill in the session
+metadata i2 displays, none of which a DBC or a log carries.
 
 Exit status follows `grep`: 0 when nothing was wrong, 1 when the command
 finished but found something (malformed lines, layout problems), 2 when it
@@ -205,6 +223,18 @@ The test finds `.venv/bin/python` on its own, or honours
 replays one, and a failure leaves the generated files under
 `target/differential/<seed>/`.
 
+The `.ld` exporter is held to the same standard by a second oracle, since a
+format nobody documented is only written correctly if something nobody here
+wrote can read it back:
+
+```bash
+scripts/fetch_ld_oracle.sh
+cargo test --test ld -- --nocapture
+```
+
+`SPATIAX_REQUIRE_LDPARSER=1` turns a missing reader from a skip into a
+failure, which is what CI sets.
+
 ## Current state
 
 Honest accounting. A row is only "done" when there is a test named for it
@@ -235,7 +265,8 @@ and CI runs that test.
 | Read timeout on a live capture | Done — `a_capture_with_a_read_timeout_stops_waiting_once_the_bus_goes_quiet`, `the_live_command_exits_cleanly_once_the_bus_has_been_quiet_for_the_timeout` |
 | Benchmarks | Done — `benches/decode.rs`; the `benchmarks` job in CI runs them on every push and prints the table in its summary |
 | Demo lap (`fixtures/demo`, synthetic) | Done — `tests/demo_lap.rs` decodes every frame and checks the channels still read like a lap; CI regenerates the log with `scripts/synthetic_lap.py --check` |
-| MoTeC `.ld` export | Stretch goal |
+| MoTeC `.ld` export (`ld`, `spatiax export`) | Done — `tests/ld.rs`; `ldparser` reads back all 70,993 values of the exported demo lap in the `ld export vs ldparser` CI job, and `fixtures/gt3_sample.ld` is a byte-level golden file |
+| The exported file opened in MoTeC i2 | **Not yet confirmed** — no file from this crate has been opened in i2 |
 
 ## Performance
 
@@ -306,10 +337,10 @@ In order, each building on the one before:
   SocketCAN capture, and `candump` replay.
 - **Performance.** Byte-aligned fast paths, benchmarks, and the first
   numbers this project is willing to publish.
+- **MoTeC `.ld` export.** The decoded log written as a file i2 reads,
+  checked against an independent reader and a golden file.
 
-## Stretch goal — MoTeC `.ld` export
-
-The intended endpoint is **writing decoded output as a MoTeC `.ld` file.**
+## MoTeC `.ld` export
 
 MoTeC i2 is the de facto analysis tool on GT3, GT4, LMP, and most
 single-seater grids; engineers work inside it for the whole of a session. A
@@ -319,15 +350,30 @@ is a complete and useful sentence, in a way that "decode your log and then
 look at my custom dashboard" is not.
 
 It is also the part of this project that cannot be faked. The format is
-binary, undocumented by MoTeC, and community-reverse-engineered, so a
-working exporter is real evidence of both the reverse-engineering and the
-domain knowledge — that channels carry units and per-channel sample rates,
-and that those rates differ across a car. Verification is a round-trip:
-export a decoded log, open it in i2, and confirm the traces match the
-source, backed by a byte-level golden-file test.
+binary and undocumented by MoTeC; what exists is a community
+reverse-engineering effort, and the layout here was rebuilt from it and then
+checked field by field.
 
-Deliberately *not* the stretch goal: a web dashboard, or a bespoke binary
-log format. Neither proves anything a motorsport team cares about.
+**How far the evidence goes, precisely.** Every value in an exported file is
+read back by [`ldparser`](https://github.com/gotzl/ldparser) — an
+independently reverse-engineered reader, pinned by commit and checksum,
+never vendored into this MIT tree because it is GPL-3.0 — and compared bit
+for bit against what this crate meant to write. That runs in CI on every
+push, alongside a byte-level golden file. What has *not* happened is the
+round trip that matters most: no file this crate produced has been opened in
+i2. Until it has, this section claims agreement with another reader and
+nothing about MoTeC's own software.
+
+What the exporter does today: one sample rate for every channel, chosen from
+the log unless `--rate` says otherwise; sample-and-hold between updates,
+with a channel's first value carried back to the start so no trace begins at
+a zero that never happened; `f32` samples with the format's calibration
+fields left at identity, so the stored word is the physical value. Left for
+later: per-channel sample rates, `int16` channels with per-channel scaling,
+and the `.ldx` companion file that carries lap beacons.
+
+Deliberately *not* built instead: a web dashboard, or a bespoke binary log
+format. Neither proves anything a motorsport team cares about.
 
 ## Why the rewrite
 

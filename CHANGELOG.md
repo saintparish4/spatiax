@@ -6,6 +6,22 @@ numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- MoTeC `.ld` export, as the `ld` module and a `spatiax export` subcommand.
+  A decoded log is resampled onto one fixed grid — sample and hold, at the
+  first standard rate at or above the fastest message unless `--rate` says
+  otherwise — and written as `f32` channels with the format's calibration
+  fields left at identity, so the stored word is the physical value.
+  `--driver`, `--vehicle`, `--venue` and `--event` supply the session
+  metadata i2 shows.
+- A second oracle, `ldparser`, pinned by commit and checksum and fetched by
+  `scripts/fetch_ld_oracle.sh`. CI reads back every value of an exported lap
+  with it, and `fixtures/gt3_sample.ld` is a byte-level golden file. No file
+  produced by this crate has been opened in MoTeC i2 yet.
+- `Error::Export`, for a session that cannot be built from the log and
+  database given.
+
 ## [0.1.0] — 2026-09-03
 
 First release.

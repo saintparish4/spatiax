@@ -36,6 +36,11 @@ fn errors_are_distinguishable_by_variant_and_readable_as_text() {
 
     let text = bad_id.unwrap_err().to_string();
     assert!(text.contains("0x1000"), "got: {text}");
+
+    let no_frames = spatiax::ld::sample(&spatiax::Database::new(), &[], None);
+    assert!(matches!(no_frames, Err(Error::Export { .. })));
+    let text = no_frames.unwrap_err().to_string();
+    assert!(text.starts_with("cannot export:"), "got: {text}");
 }
 
 #[test]
