@@ -229,3 +229,84 @@ fn decode_shows_a_data_length_code_that_runs_past_the_bytes_carried() {
     assert_eq!(lines[5], "2.000000 100 EngineData");
     assert_eq!(output.status.code(), Some(0));
 }
+
+#[test]
+fn export_writes_a_readable_file_and_reports_what_it_could_not_use() {
+    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("export_sample.ld");
+    let output = spatiax(&[
+        "export",
+        DBC,
+        LOG,
+        "--output",
+        out.to_str().unwrap(),
+        "--rate",
+        "1000",
+    ]);
+    let lines: Vec<_> = stderr(&output).lines().map(str::to_string).collect();
+    assert!(
+        lines[0].ends_with("10 channels at 1000 Hz, 3 samples each, from 7 frames"),
+        "{}",
+        lines[0]
+    );
+    assert_eq!(
+        lines[1],
+        "spatiax: 3 signal value(s) dropped: a frame was too short to carry them"
+    );
+
+    // Header, event block, ten channel headers, ten channels of three
+    // samples — and the marker a reader looks for first.
+    let written = std::fs::read(&out).expect("the export wrote a file");
+    assert_eq!(written.len(), 1762 + 1154 + 10 * 124 + 10 * 3 * 4);
+    assert_eq!(&written[..4], &[0x40, 0x00, 0x00, 0x00]);
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn export_at_a_rate_of_zero_exits_with_status_2() {
+    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("export_zero.ld");
+    let output = spatiax(&[
+        "export",
+        DBC,
+        LOG,
+        "--output",
+        out.to_str().unwrap(),
+        "--rate",
+        "0",
+    ]);
+    assert_eq!(
+        stderr(&output).trim(),
+        "spatiax: cannot export: a sample rate of 0 Hz describes no grid"
+    );
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn export_names_the_driver_vehicle_and_venue_it_was_given() {
+    let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("export_metadata.ld");
+    let output = spatiax(&[
+        "export",
+        DBC,
+        LOG,
+        "--output",
+        out.to_str().unwrap(),
+        "--rate",
+        "1000",
+        "--driver",
+        "Sharif",
+        "--vehicle",
+        "GT3-01",
+        "--venue",
+        "Spa",
+    ]);
+    assert_eq!(output.status.code(), Some(1));
+
+    let written = std::fs::read(&out).expect("the export wrote a file");
+    let text = |at: usize, len: usize| {
+        String::from_utf8_lossy(&written[at..at + len])
+            .trim_end_matches('\0')
+            .to_string()
+    };
+    assert_eq!(text(158, 64), "Sharif");
+    assert_eq!(text(222, 64), "GT3-01");
+    assert_eq!(text(350, 64), "Spa");
+}

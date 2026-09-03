@@ -1,5 +1,5 @@
-//! `spatiax` on the command line: decode a `candump` log against a DBC, or
-//! check a DBC for layout problems.
+//! `spatiax` on the command line: decode a `candump` log against a DBC,
+//! check a DBC for layout problems, or export a decoded log for MoTeC i2.
 //!
 //! Exit status follows the `grep` convention so scripts can branch on it:
 //! 0 when everything was read and nothing was wrong, 1 when the command ran
@@ -8,6 +8,7 @@
 
 mod check;
 mod decode;
+mod export;
 #[cfg(all(feature = "socketcan", target_os = "linux"))]
 mod live;
 mod output;
@@ -53,6 +54,31 @@ enum Command {
         /// DBC file to check
         dbc: PathBuf,
     },
+    /// Write a decoded log as a MoTeC `.ld` file
+    Export {
+        /// DBC file describing the bus
+        dbc: PathBuf,
+        /// candump log file
+        log: PathBuf,
+        /// File to write
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Sample rate in Hz; defaults to the fastest message in the log
+        #[arg(long)]
+        rate: Option<u16>,
+        /// Driver name, as i2 shows it
+        #[arg(long)]
+        driver: Option<String>,
+        /// Vehicle identifier, as i2 shows it
+        #[arg(long)]
+        vehicle: Option<String>,
+        /// Venue name, as i2 shows it
+        #[arg(long)]
+        venue: Option<String>,
+        /// Free text describing the session
+        #[arg(long)]
+        event: Option<String>,
+    },
     /// Decode frames as they arrive on a SocketCAN interface
     #[cfg(all(feature = "socketcan", target_os = "linux"))]
     Live {
@@ -73,6 +99,27 @@ fn main() -> ExitCode {
     let outcome = match Cli::parse().command {
         Command::Decode { dbc, log, format } => decode::run(&dbc, &log, format),
         Command::Check { dbc } => check::run(&dbc),
+        Command::Export {
+            dbc,
+            log,
+            output,
+            rate,
+            driver,
+            vehicle,
+            venue,
+            event,
+        } => export::run(
+            &dbc,
+            &log,
+            &output,
+            rate,
+            export::Metadata {
+                driver,
+                vehicle,
+                venue,
+                event,
+            },
+        ),
         #[cfg(all(feature = "socketcan", target_os = "linux"))]
         Command::Live {
             dbc,
