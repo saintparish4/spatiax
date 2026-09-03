@@ -29,10 +29,17 @@ socketcan = { version = "3", default-features = false, optional = true }
 [dev-dependencies]
 proptest = "1"
 rand = "0.9"
+# No plots: the numbers go through `scripts/bench_table.py`, and dropping
+# `plotters` and `rayon` keeps the bench build small.
+criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
 
 [[bin]]
 name = "spatiax"
 required-features = ["cli"]
+
+[[bench]]
+name = "decode"
+harness = false
 
 [profile.release]
 lto = "thin"

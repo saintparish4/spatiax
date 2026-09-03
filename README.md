@@ -12,9 +12,10 @@ decode against the reference implementation the industry already trusts.
 > SocketCAN capture, and the `spatiax` command-line tool exist and are
 > backed by the three layers of evidence below — hand-computed vectors,
 > property tests over every layout, and a differential test against
-> `cantools` that CI runs on every push. Performance numbers do not exist
-> yet. Nothing below is claimed as working unless the status table says so.
-> See [Current state](#current-state).
+> `cantools` that CI runs on every push. The first measured numbers are in
+> [Performance](#performance), with the machine that produced them. Nothing
+> below is claimed as working unless the status table says so. See
+> [Current state](#current-state).
 
 ---
 
@@ -172,14 +173,62 @@ and CI runs that test.
 | DBC layout check (`dbc::check`) | Done — `dbc::check::tests` |
 | `spatiax` binary (`decode`, `check`) | Done — `tests/cli.rs` runs the built binary end to end |
 | SocketCAN live capture (`live::Capture`, `spatiax live`) | Done — `live::tests`, `tests/live.rs` sends frames over `vcan0` in CI and reads them back through both |
-| Benchmarks | Planned |
+| Benchmarks | Done — `benches/decode.rs`; the `benchmarks` job in CI runs them on every push and prints the table in its summary |
 | MoTeC `.ld` export | Stretch goal |
 
-There are **no published performance numbers**, and there will not be any
-until `cargo bench` produces them in CI on a machine the reader can
-identify. The previous version of this README carried a table of measured
-throughput and latency figures for a workspace that had never compiled;
-removing it was the first task of the rebuild.
+## Performance
+
+The table below is the output of `scripts/bench_table.py` after
+`cargo bench` on the machine named in its first line. That is the only way
+a figure gets into this README: the script reads what criterion measured,
+and the `benchmarks` job in CI runs the same benches on every push and
+prints its own table in the job summary, so a GitHub-hosted runner can be
+compared against the figures here. The previous version of this README
+carried a throughput table for a workspace that had never compiled;
+removing it was the first task of the rebuild, and this section is what
+replaces it.
+
+WSL2 on a laptop is not a quiet machine. An earlier run on the same day,
+with the CPU clocked down, came in 2.5× slower on every row including the
+text parsing; two quiet runs agreed within 10%, and this is the second.
+Treat these as indicative and re-run them on your own hardware.
+
+Measured on AMD Ryzen 5 5625U with Radeon Graphics (8 threads), Linux 6.6.87.2-microsoft-standard-WSL2, rustc 1.97.1 (8bab26f4f 2026-07-14), 2026-09-03.
+
+| Benchmark | Mean per iteration (95% CI) | Per unit | Rate |
+|---|---|---|---|
+| `decode_frame/gt3_sample` · 7 frames | 273.3 ns (269.8 ns – 278.0 ns) | 39.0 ns / frame | 25.6 M frames/s |
+| `decode_message/EngineData` · 4 signals | 21.7 ns (21.6 ns – 21.9 ns) | 5.4 ns / signal | 184.0 M signals/s |
+| `decode_message/WheelSpeeds` · 2 signals | 14.4 ns (14.1 ns – 14.8 ns) | 7.2 ns / signal | 138.9 M signals/s |
+| `decode_message/SuspensionData` · 2 signals | 16.9 ns (16.6 ns – 17.2 ns) | 8.4 ns / signal | 118.7 M signals/s |
+| `extract_raw/intel/1_bit` | 3.8 ns (3.8 ns – 3.9 ns) | 3.8 ns / signal | 259.8 M signals/s |
+| `extract_raw/intel/16_aligned` | 4.1 ns (4.1 ns – 4.2 ns) | 4.1 ns / signal | 242.5 M signals/s |
+| `extract_raw/intel/12_unaligned` | 3.7 ns (3.6 ns – 3.7 ns) | 3.7 ns / signal | 273.2 M signals/s |
+| `extract_raw/intel/64` | 3.6 ns (3.6 ns – 3.7 ns) | 3.6 ns / signal | 276.8 M signals/s |
+| `extract_raw/motorola/16_aligned` | 4.7 ns (4.6 ns – 4.7 ns) | 4.7 ns / signal | 214.0 M signals/s |
+| `extract_raw/motorola/8_unaligned` | 4.8 ns (4.7 ns – 4.9 ns) | 4.8 ns / signal | 209.1 M signals/s |
+| `extract_raw/motorola/64` | 4.7 ns (4.6 ns – 4.8 ns) | 4.7 ns / signal | 212.9 M signals/s |
+| `extract_raw/intel/64_over_9_bytes` | 65.0 ns (63.5 ns – 66.7 ns) | 65.0 ns / signal | 15.4 M signals/s |
+| `extract_raw/motorola/64_over_9_bytes` | 80.7 ns (79.6 ns – 81.9 ns) | 80.7 ns / signal | 12.4 M signals/s |
+| `candump/classic` | 197.0 ns (195.9 ns – 198.1 ns) | 197.0 ns / line | 5.1 M lines/s |
+| `candump/fd` | 212.6 ns (210.6 ns – 214.8 ns) | 212.6 ns / line | 4.7 M lines/s |
+
+What each row measures:
+
+- `decode_frame/gt3_sample` — `Database::decode_frame` over the seven data
+  frames in `fixtures/gt3_sample.log`, taken as-is. That mix includes an
+  identifier the DBC does not describe, a one-byte diagnostic frame, and a
+  truncated frame whose three missing signals each produce an error, so it
+  is closer to a bad day on the bus than to a clean stream.
+- `decode_message/*` — `Message::decode` on each fixture message with a full
+  payload, including sign interpretation, scaling, and multiplexor
+  selection. This is the per-signal cost a caller sees.
+- `extract_raw/*` — the bit extraction alone, by layout. Width no longer
+  matters; byte order costs one `bswap`. The `_over_9_bytes` rows are the
+  shape a single word load cannot cover — 58 bits or more from an unaligned
+  start — which falls back to the bit walk.
+- `candump/*` — parsing one log line into a frame, which is where
+  `spatiax decode` actually spends its time.
 
 ## Roadmap
 
@@ -253,10 +302,15 @@ cargo test
 
 No system libraries, no ML runtimes, no Docker. The library depends on
 `thiserror` alone; the binary adds `clap` behind the `cli` feature, and
-`proptest` and `rand` are dev-dependencies. Requires Rust 1.85 or later.
-The differential test additionally wants Python 3 with `cantools` and skips
-with a message when it cannot find one — see
+`proptest`, `rand`, and `criterion` are dev-dependencies. Requires Rust 1.85
+or later. The differential test additionally wants Python 3 with `cantools`
+and skips with a message when it cannot find one — see
 [Correctness strategy](#correctness-strategy) for the two-line setup.
+
+```bash
+cargo bench                        # the benchmarks in benches/decode.rs
+python3 scripts/bench_table.py     # their results as the table above
+```
 
 Live capture is behind the `socketcan` feature and only does anything on
 Linux, so the default build stays portable on macOS and Windows. Its tests

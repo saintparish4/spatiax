@@ -86,6 +86,22 @@ jobs:
           SPATIAX_REQUIRE_ORACLE: "1"
           SPATIAX_DIFFERENTIAL_CASES: "500000"
 
+  bench:
+    name: benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run the benchmarks
+        run: cargo bench --bench decode
+
+      - name: Publish the table in the job summary
+        run: python3 scripts/bench_table.py | tee -a "$GITHUB_STEP_SUMMARY"
+
   msrv:
     name: minimum supported rust version
     runs-on: ubuntu-latest
