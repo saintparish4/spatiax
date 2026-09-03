@@ -12,9 +12,10 @@
 //! multiplexed messages (simple multiplexing: one `M` per message),
 //! value-table labels, replay of `candump` logs ([`candump`]), a layout
 //! check for databases that parsed but cannot decode right ([`dbc::check()`]),
-//! and live capture from a SocketCAN interface (`live`, Linux only, behind
-//! the `socketcan` feature). The `spatiax` binary (feature `cli`, on by
-//! default) puts `decode`, `check`, and `live` on the command line.
+//! live capture from a SocketCAN interface (`live`, Linux only, behind the
+//! `socketcan` feature), and export of a decoded log as a MoTeC `.ld` file
+//! ([`ld`]). The `spatiax` binary (feature `cli`, on by default) puts
+//! `decode`, `check`, `export`, and `live` on the command line.
 //!
 //! The evidence: hand-computed reference vectors, property tests over every
 //! layout from 1 to 64 bits, and a differential test that decodes generated
@@ -54,6 +55,7 @@ pub mod decode;
 pub mod encode;
 pub mod error;
 pub mod frame;
+pub mod ld;
 #[cfg(all(feature = "socketcan", target_os = "linux"))]
 pub mod live;
 

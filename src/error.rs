@@ -88,6 +88,13 @@ pub enum Error {
         value: f64,
     },
 
+    /// A session could not be built from what the log and database offered.
+    #[error("cannot export: {reason}")]
+    Export {
+        /// What made the session impossible.
+        reason: String,
+    },
+
     /// An underlying I/O failure, typically while reading a DBC file.
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
