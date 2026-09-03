@@ -6,9 +6,10 @@
 //! timestamps. The socket is opened FD-capable, which still receives classic
 //! frames, so one reader covers both.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::io;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use socketcan::{CanAnyFrame, CanFdSocket, EmbeddedFrame, Id, Socket, SocketOptions};
+use socketcan::{CanAnyFrame, CanFdSocket, EmbeddedFrame, Id, ShouldRetry, Socket, SocketOptions};
 
 use crate::error::Result;
 use crate::frame::{CanFrame, CanId};
@@ -26,12 +27,33 @@ impl Capture {
         Ok(Self { socket })
     }
 
+    /// Give up on a read that has waited `timeout` for a frame.
+    ///
+    /// Without one a read blocks until a frame arrives, so a bus that has
+    /// gone quiet — the car switched off, the interface unplugged — leaves
+    /// the caller with nothing to act on, not even the chance to stop.
+    /// `None` restores that blocking read, and so does a zero duration,
+    /// which is how the kernel reads a timeout of no time at all.
+    pub fn set_read_timeout(&self, timeout: Option<Duration>) -> Result<()> {
+        self.socket.set_read_timeout(timeout)?;
+        Ok(())
+    }
+
     /// Block until the next data frame arrives.
-    pub fn read(&mut self) -> Result<CanFrame> {
+    ///
+    /// `Ok(None)` means the read timeout elapsed first. It bounds each wait
+    /// for a frame rather than the call as a whole: remote and error frames
+    /// are skipped and start a new wait, since a bus busy with those is not
+    /// a quiet one.
+    pub fn read(&mut self) -> Result<Option<CanFrame>> {
         loop {
-            let (frame, received) = self.socket.read_frame_with_timestamp()?;
+            let (frame, received) = match self.socket.read_frame_with_timestamp() {
+                Ok(arrived) => arrived,
+                Err(e) if timed_out(&e) => return Ok(None),
+                Err(e) => return Err(e.into()),
+            };
             if let Some(frame) = data_frame(&frame, received) {
-                return frame;
+                return frame.map(Some);
             }
         }
     }
@@ -40,10 +62,18 @@ impl Capture {
 impl Iterator for Capture {
     type Item = Result<CanFrame>;
 
-    /// Never `None`: a bus has no end, so stopping is the caller's decision.
+    /// Ends when a read times out. With no read timeout set a bus has no
+    /// end, so stopping is then the caller's decision.
     fn next(&mut self) -> Option<Self::Item> {
-        Some(self.read())
+        self.read().transpose()
     }
+}
+
+/// A read that ran out of time rather than failing. `socketcan` reports a
+/// timeout as an error, so this is the one error kind a capture treats as
+/// the end of a wait instead of a fault.
+fn timed_out(e: &io::Error) -> bool {
+    e.should_retry()
 }
 
 /// Convert a received frame. `None` for remote and error frames, which
@@ -117,6 +147,13 @@ mod tests {
         assert!(data_frame(&remote, at(0)).is_none());
         let error = CanAnyFrame::Error(CanErrorFrame::new_error(0x2000_0004, &[0; 8]).unwrap());
         assert!(data_frame(&error, at(0)).is_none());
+    }
+
+    #[test]
+    fn a_read_that_ran_out_of_time_is_not_a_socket_failure() {
+        assert!(timed_out(&io::Error::from(io::ErrorKind::WouldBlock)));
+        assert!(!timed_out(&io::Error::from(io::ErrorKind::NotFound)));
+        assert!(!timed_out(&io::Error::other("the interface went down")));
     }
 
     #[test]

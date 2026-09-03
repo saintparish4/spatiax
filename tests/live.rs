@@ -18,7 +18,7 @@ use std::io::Read;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use socketcan::{
     CanDataFrame, CanFdFrame, CanFdSocket, EmbeddedFrame, ExtendedId, Socket, StandardId,
@@ -75,11 +75,9 @@ fn frames_from(mut capture: Capture) -> impl Iterator<Item = CanFrame> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || while tx.send(capture.read()).is_ok() {});
     std::iter::from_fn(move || {
-        Some(
-            rx.recv_timeout(Duration::from_secs(5))
-                .expect("a frame arrives within five seconds")
-                .expect("the socket read succeeds"),
-        )
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("a frame arrives within five seconds")
+            .expect("the socket read succeeds")
     })
 }
 
@@ -171,4 +169,55 @@ fn live_command_prints_frames_as_they_arrive_and_stops_when_told() {
         !stdout.contains("7FF"),
         "an undescribed frame is not printed: {stdout}"
     );
+}
+
+#[test]
+fn a_capture_with_a_read_timeout_stops_waiting_once_the_bus_goes_quiet() {
+    let Some(iface) = interface() else { return };
+    let mut capture = Capture::open(&iface).expect("open the interface");
+    capture
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .expect("set a read timeout");
+
+    // Nothing is sent here on purpose. The other tests share the interface,
+    // so drain whatever they put on the wire until one wait finds nothing.
+    let started = Instant::now();
+    while capture.read().expect("the socket read succeeds").is_some() {
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "the interface never went quiet"
+        );
+    }
+    assert!(started.elapsed() >= Duration::from_millis(200));
+    // The iterator reads the same timeout as the end of the stream.
+    assert!(capture.next().is_none());
+}
+
+#[test]
+fn the_live_command_exits_cleanly_once_the_bus_has_been_quiet_for_the_timeout() {
+    let Some(iface) = interface() else { return };
+    let started = Instant::now();
+    let output = Command::new(env!("CARGO_BIN_EXE_spatiax"))
+        .args(["live", DBC, &iface, "--timeout", "0.5"])
+        .output()
+        .expect("spatiax binary runs");
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(
+        started.elapsed() < Duration::from_secs(30),
+        "it did not stop"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("frame(s)"), "{stderr}");
+}
+
+#[test]
+fn the_live_command_rejects_a_timeout_that_is_not_a_positive_number_of_seconds() {
+    let output = Command::new(env!("CARGO_BIN_EXE_spatiax"))
+        .args(["live", DBC, "vcan0", "--timeout", "0"])
+        .output()
+        .expect("spatiax binary runs");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("positive number of seconds"), "{stderr}");
 }

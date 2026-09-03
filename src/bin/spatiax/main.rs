@@ -63,6 +63,9 @@ enum Command {
         /// Output format
         #[arg(long, value_enum, default_value_t = output::Format::Text)]
         format: output::Format,
+        /// Stop after this many seconds without a frame
+        #[arg(long, value_name = "SECONDS", value_parser = live::seconds)]
+        timeout: Option<std::time::Duration>,
     },
 }
 
@@ -71,7 +74,12 @@ fn main() -> ExitCode {
         Command::Decode { dbc, log, format } => decode::run(&dbc, &log, format),
         Command::Check { dbc } => check::run(&dbc),
         #[cfg(all(feature = "socketcan", target_os = "linux"))]
-        Command::Live { dbc, iface, format } => live::run(&dbc, &iface, format),
+        Command::Live {
+            dbc,
+            iface,
+            format,
+            timeout,
+        } => live::run(&dbc, &iface, format, timeout),
     };
     outcome.unwrap_or_else(|message| {
         eprintln!("spatiax: {message}");

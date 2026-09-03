@@ -121,6 +121,7 @@ spatiax check car.dbc                             # layout problems
 
 cargo install --path . --features socketcan       # Linux only
 spatiax live car.dbc can0                         # decode as frames arrive
+spatiax live car.dbc can0 --timeout 5             # ...and stop after 5s of silence
 ```
 
 `decode` reads the format `candump -l` writes. Frames the DBC does not
@@ -128,7 +129,10 @@ describe are counted rather than printed; a malformed log line is reported
 on stderr with its line number and reading carries on. `live` does the same
 for frames arriving on a SocketCAN interface, stamped with the kernel's
 receive time — the clock `candump` logs — so a live decode and a later
-replay of the same session agree. The text form looks like this:
+replay of the same session agree. It otherwise runs until interrupted;
+`--timeout` ends it once the bus has been quiet for that many seconds, which
+is what a car being switched off looks like from the pit wall. The text form
+looks like this:
 
 ```text
 1700000000.000500 300 SuspensionData
@@ -228,6 +232,7 @@ and CI runs that test.
 | DBC layout check (`dbc::check`) | Done — `dbc::check::tests` |
 | `spatiax` binary (`decode`, `check`) | Done — `tests/cli.rs` runs the built binary end to end |
 | SocketCAN live capture (`live::Capture`, `spatiax live`) | Done — `live::tests`, `tests/live.rs` sends frames over `vcan0` in CI and reads them back through both |
+| Read timeout on a live capture | Done — `a_capture_with_a_read_timeout_stops_waiting_once_the_bus_goes_quiet`, `the_live_command_exits_cleanly_once_the_bus_has_been_quiet_for_the_timeout` |
 | Benchmarks | Done — `benches/decode.rs`; the `benchmarks` job in CI runs them on every push and prints the table in its summary |
 | Demo lap (`fixtures/demo`, synthetic) | Done — `tests/demo_lap.rs` decodes every frame and checks the channels still read like a lap; CI regenerates the log with `scripts/synthetic_lap.py --check` |
 | MoTeC `.ld` export | Stretch goal |
