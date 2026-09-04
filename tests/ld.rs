@@ -266,7 +266,7 @@ fn ldparser_python() -> Option<PathBuf> {
     });
     if usable.is_none() {
         let message =
-            "no candidate interpreter can import ldparser; run scripts/fetch_ld_oracle.sh";
+            "no candidate interpreter can import ldparser; run bash scripts/fetch_ld_oracle.sh";
         assert!(
             std::env::var_os("SPATIAX_REQUIRE_LDPARSER").is_none(),
             "{message}"

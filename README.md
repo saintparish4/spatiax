@@ -229,7 +229,7 @@ format nobody documented is only written correctly if something nobody here
 wrote can read it back:
 
 ```bash
-scripts/fetch_ld_oracle.sh
+bash scripts/fetch_ld_oracle.sh
 cargo test --test ld -- --nocapture
 ```
 

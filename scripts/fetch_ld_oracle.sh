@@ -7,7 +7,11 @@
 # pinned by commit and verified by checksum, into the gitignored directory
 # where the cantools oracle's interpreter already lives.
 #
-# Usage: scripts/fetch_ld_oracle.sh [destination-directory]
+# Run it through bash rather than as an executable: this repository has
+# core.filemode disabled, so no script in scripts/ carries the executable
+# bit in git and CI invokes each one through its interpreter.
+#
+# Usage: bash scripts/fetch_ld_oracle.sh [destination-directory]
 
 set -euo pipefail
 

@@ -110,7 +110,7 @@ jobs:
       - name: Install the reference reader
         run: |
           pip install numpy
-          scripts/fetch_ld_oracle.sh
+          bash scripts/fetch_ld_oracle.sh
 
       - name: Read back what the exporter wrote
         run: cargo test --test ld -- --nocapture
