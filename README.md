@@ -267,7 +267,7 @@ and CI runs that test.
 | Benchmarks | Done — `benches/decode.rs`; the `benchmarks` job in CI runs them on every push and prints the table in its summary |
 | Demo lap (`fixtures/demo`, synthetic) | Done — `tests/demo_lap.rs` decodes every frame and checks the channels still read like a lap; CI regenerates the log with `scripts/synthetic_lap.py --check` |
 | MoTeC `.ld` export (`ld`, `spatiax export`) | Done — `tests/ld.rs`; in the `ld export vs ldparser` CI job `ldparser` reads back all 70,993 values of the exported demo lap, and its own writer reproduces `fixtures/gt3_sample.ld` byte for byte |
-| The exported file opened in MoTeC i2 | **Not yet confirmed** — no file from this crate has been opened in i2 |
+| The exported file opened in MoTeC i2 | Confirmed 2026-09-03, i2 Pro 1.1 — it opens the file, derives a 1:22.520 session from the sample count and rate in the channel headers (4126 / 50 Hz), and writes its own `.ldx`. Individual channel traces have not yet been read off an i2 graph |
 
 ## Performance
 
@@ -371,11 +371,21 @@ file, all three in CI on every push:
   fields and the padding — everything a reader discards and therefore cannot
   vouch for.
 
-What has *not* happened is the round trip that matters most: no file this
-crate produced has been opened in i2. Two implementations agreeing on a
-reverse-engineered format is not the same as MoTeC's own software accepting
-it, and until someone opens one, this section claims the former and nothing
-about the latter.
+- **Opened in i2.** MoTeC i2 Pro 1.1 opens an exported lap and reports it as
+  a 1:22.520 session. That number is `4126 / 50` — the sample count and the
+  rate this crate wrote into the channel headers — so i2 is reading those
+  fields and agreeing with them. It also generates its own `.ldx` companion
+  file for the log, which it does for files it accepts.
+
+Two limits on that last point, since it is the one that would be easiest to
+overstate. Individual channel traces have not yet been read off an i2 graph
+and compared with the source log, so what is confirmed is that i2 accepts
+the file and reads its structure, not that every value plots correctly. And
+i2's stock worksheets are wired to MoTeC's standard channel names — `Engine
+RPM`, `Ground Speed` — while this crate writes the DBC's own signal names,
+so on a fresh Circuit workspace only `Gear` happens to match and the rest of
+the channels have to be added to a graph by hand. They are all present in
+the file; the default layout just does not know to look for them.
 
 What the exporter does today: one sample rate for every channel, chosen from
 the log unless `--rate` says otherwise; sample-and-hold between updates,
@@ -383,7 +393,9 @@ with a channel's first value carried back to the start so no trace begins at
 a zero that never happened; `f32` samples with the format's calibration
 fields left at identity, so the stored word is the physical value. Left for
 later: per-channel sample rates, `int16` channels with per-channel scaling,
-and the `.ldx` companion file that carries lap beacons.
+and an option to rename channels to MoTeC's standard names so i2's stock
+worksheets find them. Writing the `.ldx` companion file is *not* on that
+list — i2 generates one itself on opening a log that has none.
 
 Deliberately *not* built instead: a web dashboard, or a bespoke binary log
 format. Neither proves anything a motorsport team cares about.
