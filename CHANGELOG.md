@@ -19,8 +19,13 @@ numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `scripts/fetch_ld_oracle.sh`. CI checks the exporter against it twice: it
   reads back every value of an exported lap, and its own writer reproduces
   `fixtures/gt3_sample.ld` byte for byte, which covers the fields a reader
-  discards. `fixtures/gt3_sample.ld` is also a byte-level golden file. No
-  file produced by this crate has been opened in MoTeC i2 yet.
+  discards. `fixtures/gt3_sample.ld` is also a byte-level golden file.
+- MoTeC i2 Pro 1.1 opens an exported lap and reads a 1:22.520 session from
+  the sample count and rate in the channel headers, and generates its own
+  `.ldx` for it. Individual channel traces have not been compared on an i2
+  graph yet, and i2's stock worksheets look for MoTeC's standard channel
+  names rather than the DBC's, so only `Gear` appears without adding
+  channels by hand.
 - `Error::Export`, for a session that cannot be built from the log and
   database given.
 
