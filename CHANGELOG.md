@@ -68,5 +68,5 @@ test that decodes generated databases with both this crate and `cantools` and
 requires them to agree — 500,000 signal values per CI run. All of it runs in
 CI, together with a live capture over a virtual CAN interface.
 
-[Unreleased]: https://github.com/saintparish4/spatial/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/saintparish4/spatial/releases/tag/v0.1.0
+[Unreleased]: https://github.com/saintparish4/spatiax/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/saintparish4/spatiax/releases/tag/v0.1.0
