@@ -2,6 +2,22 @@
 
 A CAN bus / DBC decoder for motorsport telemetry, written in Rust.
 
+- **What it does** — raw CAN frames plus a DBC in, engineering values out.
+  Both byte orders, signed and unsigned, multiplexing, value tables, CAN FD
+  to 64 bytes. Reads `candump` logs, captures live off a SocketCAN
+  interface, and exports a MoTeC `.ld` file that i2 opens.
+- **Why it exists** — the previous version of this repository had three
+  decoder bugs that produced plausible-looking traces rather than crashing.
+  In telemetry that is the expensive kind of wrong: an engineer chases a
+  problem that does not exist, and it costs a session.
+  [The full story](#why-the-rewrite).
+- **What backs it** — 500,000 decoded values checked against `cantools` on
+  every CI push, reference vectors computed by hand, and property tests
+  over every signal layout from 1 to 64 bits. An exported lap is read back
+  by an independent `.ld` implementation and opens in MoTeC i2 Pro.
+- **See it work** — [one lap, decoded and plotted](#see-it-on-a-lap), in
+  three commands.
+
 The point of this project is not that it decodes CAN — `cantools` already
 does that, and does it well. The point is that it decodes CAN **and ships
 the evidence that it does so correctly**: hand-computed reference vectors,
