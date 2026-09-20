@@ -8,6 +8,20 @@ numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A corpus test against real production databases. `tests/corpus.rs` parses
+  every DBC in comma.ai's `opendbc`, fetched at a pinned commit by
+  `scripts/fetch_dbc_corpus.sh` and never vendored, and compares what it
+  read with `cantools` field by field: identifier, DLC, start bit, width,
+  byte order, sign, factor, offset and multiplexing role. 52 of the 58
+  databases parse, and on the 49 both implementations accept the two agree
+  on 3,242 messages and 23,985 signals with no differences. `dbc::check` is
+  compared with cantools' strict mode the same way and reaches the same
+  verdict on all 49. A file refused for a reason the crate does not
+  document as a limit fails the run, and the new `real DBC corpus` CI job
+  publishes the table the test writes to `target/corpus-summary.md`.
+- `docs/metrics.md`: every published number, what produces it, the command
+  that reproduces it, and how each has moved from 0.1.0 to now.
+
 - MoTeC `.ld` export, as the `ld` module and a `spatiax export` subcommand.
   A decoded log is resampled onto one fixed grid — sample and hold, at the
   first standard rate at or above the fastest message unless `--rate` says
@@ -22,12 +36,30 @@ numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   discards. `fixtures/gt3_sample.ld` is also a byte-level golden file.
 - MoTeC i2 Pro 1.1 opens an exported lap and reads a 1:22.520 session from
   the sample count and rate in the channel headers, and generates its own
-  `.ldx` for it. Individual channel traces have not been compared on an i2
-  graph yet, and i2's stock worksheets look for MoTeC's standard channel
-  names rather than the DBC's, so only `Gear` appears without adding
-  channels by hand.
+  `.ldx` for it. Channel traces were compared on an i2 graph the same day:
+  `EngineRPM` peaks at 8600 rpm and `Speed` at 258 km/h, as the log has
+  them. i2's stock worksheets look for MoTeC's standard channel names
+  rather than the DBC's, so only `Gear` appears without adding channels by
+  hand.
 - `Error::Export`, for a session that cannot be built from the log and
   database given.
+
+### Fixed
+
+- `VECTOR__INDEPENDENT_SIG_MSG`, the container CANdb++ puts signals in when
+  they belong to no message, is dropped with its signals rather than
+  refused over the marker identifier it carries. `cantools` drops it too.
+  Two `opendbc` databases could not be read before this.
+- A `VAL_` record left without its `;` no longer swallows the record on the
+  next line. It is taken as written — what the parser already did at the
+  end of a file — and the next record is read normally. One `opendbc`
+  database was refused over what amounts to a decorative line.
+
+### Changed
+
+- A signal marked `m` with no page number is still refused, but now says
+  so: the error names the signal and both spellings it could have meant,
+  instead of reporting an empty multiplexor selector.
 
 ## [0.1.0] — 2026-09-03
 

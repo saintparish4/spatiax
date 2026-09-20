@@ -12,9 +12,10 @@ A CAN bus / DBC decoder for motorsport telemetry, written in Rust.
   problem that does not exist, and it costs a session.
   [The full story](#why-the-rewrite).
 - **What backs it** — 500,000 decoded values checked against `cantools` on
-  every CI push, reference vectors computed by hand, and property tests
-  over every signal layout from 1 to 64 bits. An exported lap is read back
-  by an independent `.ld` implementation and opens in MoTeC i2 Pro.
+  every CI push, reference vectors computed by hand, property tests over
+  every signal layout from 1 to 64 bits, and 58 real production vehicle
+  databases parsed on every push. An exported lap is read back by an
+  independent `.ld` implementation and opens in MoTeC i2 Pro.
 - **See it work** — [one lap, decoded and plotted](#see-it-on-a-lap), in
   three commands.
 
@@ -30,17 +31,21 @@ decode against the reference implementation the industry already trusts.
 > implemented and exercised by CI on every push. An exported lap was opened
 > in **MoTeC i2 Pro 1.1 on 2026-09-03**: i2 derived the session, wrote its
 > own `.ldx`, and plotted the channels as the log has them. Correctness is
-> checked three independent ways — reference vectors computed by hand,
-> property tests over every signal layout from 1 to 64 bits, and a
-> differential harness that decodes **500,000 generated cases against
-> `cantools` per CI run**.
+> checked four independent ways — reference vectors computed by hand,
+> property tests over every signal layout from 1 to 64 bits, a differential
+> harness that decodes **500,000 generated cases against `cantools` per CI
+> run**, and **58 real production vehicle databases** from `opendbc`, where
+> every message and signal of the 49 both implementations accept reads
+> identically to `cantools`.
 >
 > Known limits, stated plainly: extended multiplexing (`m<N>M` /
-> `SG_MUL_VAL_`) is *rejected at parse time* rather than decoded, the demo
-> lap is synthetic rather than a real logged session, and the benchmark
-> figures come from a single laptop. Nothing here is claimed as working
-> unless [Current state](#current-state) names the test that proves it —
-> or [see it on a lap](#see-it-on-a-lap) first.
+> `SG_MUL_VAL_`) is *rejected at parse time* rather than decoded, so are the
+> six corpus databases described in [Correctness
+> strategy](#correctness-strategy), the demo lap is synthetic rather than a
+> real logged session, and the benchmark figures come from a single laptop.
+> Nothing here is claimed as working unless [Current
+> state](#current-state) names the test that proves it — or [see it on a
+> lap](#see-it-on-a-lap) first.
 
 ---
 
@@ -206,7 +211,7 @@ could not run.
 
 ## Correctness strategy
 
-Three layers, in increasing order of what they catch:
+Four layers, in increasing order of what they catch:
 
 1. **Hand-computed reference vectors.** A small set of signals whose
    expected raw and physical values were worked out on paper from the DBC
@@ -232,6 +237,32 @@ Three layers, in increasing order of what they catch:
    `cantools` produces. The test refuses to pass with fewer than 100,000
    decoded signal values; CI runs 500,000 and fails if the oracle is
    missing.
+4. **Real production databases.** The first three layers all test shapes
+   this project chose. `tests/corpus.rs` runs the parser over comma.ai's
+   [`opendbc`](https://github.com/commaai/opendbc) instead — 58 databases
+   for real vehicles, written by manufacturers and by the people reverse
+   engineering them, fetched at a pinned commit by
+   `scripts/fetch_dbc_corpus.sh` and never vendored. They carry what a
+   generator never produces: comments, attribute definitions, node lists,
+   global value tables, the container CANdb++ puts orphan signals in, and
+   records whose author read the format loosely. 52 of the 58 parse. On the
+   49 both implementations accept, **every message and every signal field —
+   identifier, DLC, start bit, width, byte order, sign, factor, offset,
+   multiplexing role — is compared against `cantools` and must be
+   identical**: 3,242 messages and 23,985 signals a run. `dbc::check` is
+   held to the same standard against cantools' strict mode, and the two
+   reach the same verdict on all 49 files.
+
+   The six it refuses are refused for reasons the crate documents, and the
+   test fails if a new one appears for a reason it does not. Five declare a
+   standard identifier wider than 11 bits — a `BO_` no CAN frame could
+   carry — and `cantools` refuses those same five files. The sixth marks a
+   signal `m` with no page number, which is either a multiplexor written
+   wrongly or a page that lost its number; the two decode differently, so
+   it is refused rather than guessed. The traffic runs the other way too:
+   three databases parse here that `cantools` rejects over message and
+   signal names that begin with a digit, which is a grammar violation that
+   changes nothing about how the frame decodes.
 
 Layer 3 is the differentiator. `cantools` is what motorsport data engineers
 already reach for, so agreement with it is a claim anyone can evaluate in
@@ -259,10 +290,26 @@ cargo test --test ld -- --nocapture
 `SPATIAX_REQUIRE_LDPARSER=1` turns a missing reader from a skip into a
 failure, which is what CI sets.
 
+The corpus works the same way — fetched, not vendored, and skipped rather
+than faked when it is absent:
+
+```bash
+bash scripts/fetch_dbc_corpus.sh
+cargo test --test corpus -- --nocapture
+```
+
+`SPATIAX_REQUIRE_CORPUS=1` makes a missing corpus a failure, `SPATIAX_DBC_CORPUS`
+points the test at a directory of your own `.dbc` files, and the run writes
+its table to `target/corpus-summary.md`. Every number in this README that
+comes from the corpus is that file's output.
+
 ## Current state
 
 Honest accounting. A row is only "done" when there is a test named for it
-and CI runs that test.
+and CI runs that test. Every number this README publishes is listed with
+its provenance and its reproducing command in
+[`docs/metrics.md`](docs/metrics.md), together with how each one has moved
+release to release.
 
 | Capability | State |
 |---|---|
@@ -283,7 +330,12 @@ and CI runs that test.
 | CAN FD frame I/O | Done — FD frames read from `candump` logs (`reads_a_can_fd_frame_and_drops_its_flags_digit`) and from SocketCAN (`an_fd_frame_with_an_extended_identifier_carries_all_its_bytes`, `tests/live.rs`) |
 | Data length codes | Done — the CAN FD sizes and the classic `len8_dlc` quirk both map (`every_data_length_code_maps_to_the_length_can_fd_gives_it`, `keeps_the_data_length_code_of_a_len8_dlc_frame`, `rejects_a_can_fd_payload_of_a_length_no_code_can_express`) |
 | `candump` log replay (`candump::LogReader`) | Done — `candump::tests`, `tests/candump.rs` replays `fixtures/gt3_sample.log` |
-| DBC layout check (`dbc::check`) | Done — `dbc::check::tests` |
+| DBC layout check (`dbc::check`) | Done — `dbc::check::tests`, and on real databases it reaches the same verdict as cantools' strict mode on all 49 comparable files (`tests/corpus.rs`) |
+| Real production DBC corpus (`opendbc`, 58 files) | Done — `tests/corpus.rs`; 52 parse, and the 49 both implementations accept agree with `cantools` on 3,242 messages and 23,985 signals, field by field |
+| A standard identifier wider than 11 bits | Rejected at parse time — `cantools` refuses the same five corpus files for the same reason |
+| A multiplexing marker with no page number (`m`) | Rejected at parse time rather than guessed — `rejects_a_multiplexing_marker_with_no_page_number` |
+| The CANdb++ container for signals that belong to no message | Dropped whole, as `cantools` drops it — `drops_the_container_for_signals_that_belong_to_no_message` |
+| A `VAL_` record left without its `;` | Taken as written, and the record after it is still read — `an_unterminated_value_table_does_not_swallow_the_record_after_it` |
 | `spatiax` binary (`decode`, `check`) | Done — `tests/cli.rs` runs the built binary end to end |
 | SocketCAN live capture (`live::Capture`, `spatiax live`) | Done — `live::tests`, `tests/live.rs` sends frames over `vcan0` in CI and reads them back through both |
 | Read timeout on a live capture | Done — `a_capture_with_a_read_timeout_stops_waiting_once_the_bus_goes_quiet`, `the_live_command_exits_cleanly_once_the_bus_has_been_quiet_for_the_timeout` |
@@ -363,6 +415,9 @@ In order, each building on the one before:
   numbers this project is willing to publish.
 - **MoTeC `.ld` export.** The decoded log written as a file i2 reads,
   checked against an independent reader and a golden file.
+- **Real databases.** The parser run over a corpus of production vehicle
+  DBCs, compared with `cantools` message by message and signal by signal,
+  with every refusal it makes named and justified.
 
 ## MoTeC `.ld` export
 
