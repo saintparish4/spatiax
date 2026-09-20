@@ -29,10 +29,17 @@ pub fn parse(text: &str) -> Result<Database> {
     parser.finish()
 }
 
+/// The container CANdb++ puts signals in when they belong to no message.
+/// Its identifier is a marker rather than an address, so it is dropped
+/// whole; `cantools` drops it too.
+const INDEPENDENT_SIGNAL_CONTAINER: &str = "VECTOR__INDEPENDENT_SIG_MSG";
+
 #[derive(Default)]
 struct Parser {
     db: Database,
     current: Option<Message>,
+    /// Set while the `SG_` records of a dropped `BO_` are still arriving.
+    dropping: bool,
     /// A `VAL_` record still waiting for its `;`: the line it began on and
     /// the text gathered so far. Long tables are sometimes wrapped.
     pending: Option<(usize, String)>,
@@ -41,16 +48,33 @@ struct Parser {
 impl Parser {
     fn line(&mut self, line_no: usize, line: &str) -> Result<()> {
         if let Some((start, mut text)) = self.pending.take() {
-            text.push(' ');
-            text.push_str(line);
-            return self.value_record(start, text);
+            // A record that opens before the last one closed means the last
+            // one is never going to close. Take it as written — the same
+            // thing `finish` does at the end of the file — and read this
+            // line on its own terms. `mazda_2017.dbc` in opendbc ends two
+            // `VAL_` records without their semicolon; before this, the
+            // second was read as a continuation of the first and the whole
+            // database was refused over a decorative record.
+            if starts_a_record(line) {
+                self.value_table(start, &text)?;
+            } else {
+                text.push(' ');
+                text.push_str(line);
+                return self.value_record(start, text);
+            }
         }
 
         // The trailing space keeps `BO_` from matching `BO_TX_BU_`.
         if let Some(rest) = line.strip_prefix("BO_ ") {
             self.flush();
-            self.current = Some(parse_message(rest, line_no)?);
+            self.dropping = names_independent_signal_container(rest);
+            if !self.dropping {
+                self.current = Some(parse_message(rest, line_no)?);
+            }
         } else if let Some(rest) = line.strip_prefix("SG_ ") {
+            if self.dropping {
+                return Ok(());
+            }
             let message = self
                 .current
                 .as_mut()
@@ -133,6 +157,32 @@ fn push_signal(message: &mut Message, signal: Signal, line: usize) -> Result<()>
     Ok(())
 }
 
+/// Does this line open a record, rather than continue one?
+///
+/// Only the record kinds that can follow a `VAL_` in the wild need listing;
+/// anything else is either a continuation line of the value table itself or
+/// text this parser skips anyway.
+fn starts_a_record(line: &str) -> bool {
+    const KINDS: [&str; 8] = [
+        "BO_ ",
+        "SG_ ",
+        "VAL_ ",
+        "VAL_TABLE_ ",
+        "SG_MUL_VAL_ ",
+        "CM_ ",
+        "BA_",
+        "BO_TX_BU_ ",
+    ];
+    KINDS.iter().any(|kind| line.starts_with(kind))
+}
+
+/// Is this `BO_` record the container for signals that belong to no message?
+fn names_independent_signal_container(rest: &str) -> bool {
+    rest.split_whitespace()
+        .nth(1)
+        .is_some_and(|name| name.trim_end_matches(':') == INDEPENDENT_SIGNAL_CONTAINER)
+}
+
 /// `<id> <Name>: <dlc> <Sender>`
 fn parse_message(rest: &str, line: usize) -> Result<Message> {
     let mut tokens = rest.split_whitespace();
@@ -209,6 +259,13 @@ fn parse_multiplexing(token: &str, line: usize) -> Result<Multiplexing> {
         Some(selector) if selector.ends_with('M') => Err(parse_error(
             line,
             format!("`{token}` marks a nested multiplexor; extended multiplexing is not supported"),
+        )),
+        Some("") => Err(parse_error(
+            line,
+            format!(
+                "`{token}` marks a signal as multiplexed without naming a page; \
+                 `M` marks the multiplexor and `m<N>` a page"
+            ),
         )),
         Some(selector) => Ok(Multiplexing::Multiplexed(parse_number(
             selector,
@@ -788,5 +845,41 @@ BO_ 256 EngineData: 8 ECU
     fn an_empty_document_is_an_empty_database() {
         assert!(parse("").unwrap().is_empty());
         assert!(parse("\n\n  \n").unwrap().is_empty());
+    }
+
+    #[test]
+    fn drops_the_container_for_signals_that_belong_to_no_message() {
+        // `FORD_CADS.dbc` in opendbc carries this record. Its identifier is
+        // a marker rather than an address — no frame could ever carry it —
+        // and the message after it must still be read normally.
+        let text = format!(
+            "{ONE_MESSAGE}BO_ 1073741824 VECTOR__INDEPENDENT_SIG_MSG: 0 Vector__XXX\n \
+             SG_ New_Signal_943 : 0|8@1+ (1,0) [0|0] \"\" Vector__XXX\n\
+             BO_ 512 Brakes: 8 ECU\n SG_ Pressure : 0|16@1+ (1,0) [0|0] \"bar\" X\n"
+        );
+        let db = parse(&text).unwrap();
+        assert_eq!(db.len(), 2);
+        assert!(db.message(CanId::Standard(512)).is_some());
+        assert_eq!(db.signal_count(), 3);
+    }
+
+    #[test]
+    fn an_unterminated_value_table_does_not_swallow_the_record_after_it() {
+        // `mazda_2017.dbc` in opendbc ends two `VAL_` records without their
+        // semicolon. Read as one record they are nonsense, and the database
+        // was refused over what amounts to a decorative line.
+        let text = format!("{GEAR}VAL_ 1 Gear 0 \"N\"\nVAL_ 1 Mode 1 \"Sport\" ;\n");
+        let db = parse(&text).unwrap();
+        assert_eq!(labels(&db, "Gear"), [(0, "N".to_string())]);
+        assert_eq!(labels(&db, "Mode"), [(1, "Sport".to_string())]);
+    }
+
+    #[test]
+    fn rejects_a_multiplexing_marker_with_no_page_number() {
+        // `vw_pq.dbc` in opendbc marks a signal `m` with nothing after it.
+        // That is either a multiplexor written as `m` instead of `M` or a
+        // page that lost its number, and the two decode differently.
+        let text = format!("{MUXED} SG_ Other m : 24|8@1+ (1,0) [0|255] \"\" X\n");
+        assert!(message_of(parse(&text)).contains("without naming a page"));
     }
 }
