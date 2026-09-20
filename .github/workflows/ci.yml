@@ -117,6 +117,39 @@ jobs:
         env:
           SPATIAX_REQUIRE_LDPARSER: "1"
 
+  corpus:
+    name: real DBC corpus
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the reference implementation
+        run: pip install cantools==43.0.2
+
+      - name: Fetch the corpus of real production databases
+        run: bash scripts/fetch_dbc_corpus.sh
+
+      - name: Parse every database and compare the result with cantools
+        run: cargo test --test corpus -- --nocapture
+        env:
+          SPATIAX_REQUIRE_CORPUS: "1"
+          SPATIAX_REQUIRE_ORACLE: "1"
+
+      - name: Publish the corpus table in the job summary
+        if: always()
+        run: |
+          if [ -f target/corpus-summary.md ]; then
+            cat target/corpus-summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   bench:
     name: benchmarks
     runs-on: ubuntu-latest
