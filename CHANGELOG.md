@@ -6,6 +6,10 @@ numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.2.0] — 2026-09-20
+
 ### Added
 
 - A corpus test against real production databases. `tests/corpus.rs` parses
@@ -104,5 +108,6 @@ test that decodes generated databases with both this crate and `cantools` and
 requires them to agree — 500,000 signal values per CI run. All of it runs in
 CI, together with a live capture over a virtual CAN interface.
 
-[Unreleased]: https://github.com/saintparish4/spatiax/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/saintparish4/spatiax/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/saintparish4/spatiax/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/saintparish4/spatiax/releases/tag/v0.1.0

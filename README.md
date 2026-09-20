@@ -25,7 +25,7 @@ the evidence that it does so correctly**: hand-computed reference vectors,
 exhaustive property tests, and a differential harness that checks every
 decode against the reference implementation the industry already trusts.
 
-> **Status: v0.1 — working, and every claim is backed by a named test.**
+> **Status: v0.2 — working, and every claim is backed by a named test.**
 > The DBC parser, decoder, encoder, `candump` replay, live SocketCAN
 > capture, MoTeC `.ld` export, and the `spatiax` command-line tool are
 > implemented and exercised by CI on every push. An exported lap was opened

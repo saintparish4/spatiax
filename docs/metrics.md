@@ -57,11 +57,11 @@ about how a frame decodes, so the parser stays lenient about it.
 
 | Measure | Now | Reproduce |
 |---|---|---|
-| Rust lines (`src` + `tests` + `benches`) | 8,376 | `find src tests benches -name '*.rs' \| xargs wc -l \| tail -1` |
-| — of which library and binary | 5,088 | `find src -name '*.rs' \| xargs wc -l \| tail -1` |
+| Rust lines (`src` + `tests` + `benches`) | 8,417 | `find src tests benches -name '*.rs' \| xargs wc -l \| tail -1` |
+| — of which library and binary | 5,129 | `find src -name '*.rs' \| xargs wc -l \| tail -1` |
 | — of which tests | 3,107 | `find tests -name '*.rs' \| xargs wc -l \| tail -1` |
-| Test functions | 224 | `find src tests -name '*.rs' \| xargs grep -h '#\[test\]' \| wc -l` |
-| Tests run by `cargo test --all-features` | 226 | `cargo test --all-features` |
+| Test functions | 225 | `find src tests -name '*.rs' \| xargs grep -h '#\[test\]' \| wc -l` |
+| Tests run by `cargo test --all-features` | 227 | `cargo test --all-features` |
 | Runtime dependencies of the library | 1 (`thiserror`) | `cargo tree --no-default-features` |
 | Optional dependencies | `clap` (CLI), `socketcan` (live capture) | `Cargo.toml` |
 | Minimum supported Rust | 1.85, edition 2024 | the `msrv` CI job |
@@ -91,8 +91,8 @@ Where the project has actually moved, release to release.
 
 | Measure | 0.1.0 (2026-09-03) | 0.2.0 (2026-09-20) |
 |---|---|---|
-| Rust lines | 6,326 | 8,376 |
-| Test functions | 189 | 224 |
+| Rust lines | 6,326 | 8,417 |
+| Test functions | 189 | 225 |
 | CI jobs | 5 | 7 |
 | Differential values per run | 500,000 | 500,000 |
 | Real databases parsed | none | 52 of 58 |
