@@ -24,16 +24,23 @@ the evidence that it does so correctly**: hand-computed reference vectors,
 exhaustive property tests, and a differential harness that checks every
 decode against the reference implementation the industry already trusts.
 
-> **Status: early.** The parser, decoder, encoder, `candump` replay, live
-> SocketCAN capture, MoTeC `.ld` export, and the `spatiax` command-line
-> tool exist and are backed by the three layers of evidence below —
-> hand-computed vectors, property tests over every layout, and a
-> differential test against `cantools` that CI runs on every push. The
-> first measured numbers are in
-> [Performance](#performance), with the machine that produced them. Nothing
-> below is claimed as working unless the status table says so. See
-> [Current state](#current-state), or [see it on a lap](#see-it-on-a-lap)
-> first.
+> **Status: v0.1 — working, and every claim is backed by a named test.**
+> The DBC parser, decoder, encoder, `candump` replay, live SocketCAN
+> capture, MoTeC `.ld` export, and the `spatiax` command-line tool are
+> implemented and exercised by CI on every push. An exported lap was opened
+> in **MoTeC i2 Pro 1.1 on 2026-09-03**: i2 derived the session, wrote its
+> own `.ldx`, and plotted the channels as the log has them. Correctness is
+> checked three independent ways — reference vectors computed by hand,
+> property tests over every signal layout from 1 to 64 bits, and a
+> differential harness that decodes **500,000 generated cases against
+> `cantools` per CI run**.
+>
+> Known limits, stated plainly: extended multiplexing (`m<N>M` /
+> `SG_MUL_VAL_`) is *rejected at parse time* rather than decoded, the demo
+> lap is synthetic rather than a real logged session, and the benchmark
+> figures come from a single laptop. Nothing here is claimed as working
+> unless [Current state](#current-state) names the test that proves it —
+> or [see it on a lap](#see-it-on-a-lap) first.
 
 ---
 
