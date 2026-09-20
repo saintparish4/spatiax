@@ -22,6 +22,10 @@ use std::io::BufRead;
 use crate::error::{Error, Result};
 use crate::frame::{CanFrame, CanId, MAX_FRAME_LEN, dlc_to_len, len_to_dlc};
 
+/// Bytes a classic CAN frame can carry. CAN FD raised this to
+/// [`MAX_FRAME_LEN`], but only for records written with `##`.
+const CLASSIC_MAX_LEN: usize = 8;
+
 const ERROR_FRAME_FLAG: u32 = 0x2000_0000;
 
 /// Iterator over the data frames in a `candump` log.
@@ -130,6 +134,11 @@ fn fd_frame(id: CanId, text: &str, timestamp_us: u64, line: usize) -> Result<Opt
 
 /// `<data>`, or `<data>_<dlc>` for a classic frame whose data length code
 /// says more than the eight bytes it carries.
+///
+/// One `#` means a classic frame, and a classic frame carries eight bytes
+/// at most; can-utils writes anything longer with `##`. A longer payload
+/// here is a corrupt record, and accepting it would hand the decoder bytes
+/// no bus delivered.
 fn classic_frame(
     id: CanId,
     text: &str,
@@ -138,13 +147,29 @@ fn classic_frame(
 ) -> Result<Option<CanFrame>> {
     let Some((data_hex, dlc_hex)) = text.split_once('_') else {
         let data = parse_hex(text, line)?;
+        check_classic_length(&data, line)?;
         return Ok(Some(CanFrame::new(id, &data, timestamp_us)?));
     };
     let data = parse_hex(data_hex, line)?;
+    check_classic_length(&data, line)?;
     let dlc = parse_dlc(dlc_hex, line)?;
     CanFrame::with_dlc(id, &data, timestamp_us, dlc)
         .map(Some)
         .map_err(|e| log_error(line, e.to_string()))
+}
+
+fn check_classic_length(data: &[u8], line: usize) -> Result<()> {
+    if data.len() > CLASSIC_MAX_LEN {
+        return Err(log_error(
+            line,
+            format!(
+                "a classic frame carries {CLASSIC_MAX_LEN} byte(s) at most, not {}; \
+                 CAN FD records are written with `##`",
+                data.len()
+            ),
+        ));
+    }
+    Ok(())
 }
 
 /// The single hex digit after `_`.
@@ -298,6 +323,22 @@ mod tests {
         for (index, result) in all.iter().enumerate() {
             assert_eq!(line_of(result), index + 1);
         }
+    }
+
+    #[test]
+    fn rejects_a_classic_record_carrying_more_than_eight_bytes() {
+        // `#` is the classic form; can-utils writes CAN FD with `##`. Taking
+        // this one at face value would decode bytes no classic bus carried.
+        let log = "(0.0) can0 123#00112233445566778899\n";
+        let error = LogReader::new(log.as_bytes())
+            .next()
+            .expect("a line to read")
+            .expect_err("a classic frame cannot carry ten bytes");
+        assert!(error.to_string().contains("classic frame carries"));
+
+        // Eight bytes still read, and so does the CAN FD spelling of ten.
+        assert_eq!(one("(0.0) can0 123#0011223344556677\n").len(), 8);
+        assert_eq!(one("(0.0) can0 123##100112233445566778899AABB\n").len(), 12);
     }
 
     #[test]

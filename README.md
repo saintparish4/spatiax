@@ -330,6 +330,7 @@ release to release.
 | CAN FD frame I/O | Done — FD frames read from `candump` logs (`reads_a_can_fd_frame_and_drops_its_flags_digit`) and from SocketCAN (`an_fd_frame_with_an_extended_identifier_carries_all_its_bytes`, `tests/live.rs`) |
 | Data length codes | Done — the CAN FD sizes and the classic `len8_dlc` quirk both map (`every_data_length_code_maps_to_the_length_can_fd_gives_it`, `keeps_the_data_length_code_of_a_len8_dlc_frame`, `rejects_a_can_fd_payload_of_a_length_no_code_can_express`) |
 | `candump` log replay (`candump::LogReader`) | Done — `candump::tests`, `tests/candump.rs` replays `fixtures/gt3_sample.log` |
+| Length validation on replayed frames | Done — CAN FD lengths against the data length codes, and a classic record over eight bytes is refused (`rejects_a_classic_record_carrying_more_than_eight_bytes`) |
 | DBC layout check (`dbc::check`) | Done — `dbc::check::tests`, and on real databases it reaches the same verdict as cantools' strict mode on all 49 comparable files (`tests/corpus.rs`) |
 | Real production DBC corpus (`opendbc`, 58 files) | Done — `tests/corpus.rs`; 52 parse, and the 49 both implementations accept agree with `cantools` on 3,242 messages and 23,985 signals, field by field |
 | A standard identifier wider than 11 bits | Rejected at parse time — `cantools` refuses the same five corpus files for the same reason |

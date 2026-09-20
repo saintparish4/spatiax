@@ -50,6 +50,10 @@ numbers follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   they belong to no message, is dropped with its signals rather than
   refused over the marker identifier it carries. `cantools` drops it too.
   Two `opendbc` databases could not be read before this.
+- A `candump` record written with one `#` — the classic form — is refused
+  when it carries more than eight bytes, instead of being read as a long
+  frame no classic bus could have delivered. CAN FD records, written with
+  `##`, are unaffected. Only FD lengths were validated before.
 - A `VAL_` record left without its `;` no longer swallows the record on the
   next line. It is taken as written — what the parser already did at the
   end of a file — and the next record is read normally. One `opendbc`
